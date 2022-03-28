@@ -5,7 +5,6 @@
 # Packages
 library(tidyverse)
 
-
 ## Parameters 
 
 # Read parameter file
@@ -13,6 +12,8 @@ param_file <- "parameters/default_species.p"
 params <- read_csv(param_file)
 p_list <- setNames(as.list(params$value), params$parameter) # list
 
+
+## Figure 1 Variations ----------
 
 ## Trait Linkages 
 
@@ -37,7 +38,7 @@ link_traits <- function(sigma, parameter_list) {
   ## Calculate traits derived from LMA
   # leaf lifespan
   lambda = c*sigma
-
+  
   # leaf N content
   n = A + B*sigma
   
@@ -82,22 +83,106 @@ cycle_carbon <- function(sigma, N_min, parameter_list = p_list) {
 #traits <- link_traits(0.05, p_list)
 #cycle_carbon(0.02, p_list, 0.05)
 
-## Figure 1
+# generate plants and environment
+lma <- seq(0,1.2, length = 20)
+N_min <- seq(0.05, 40, length = 20)
+grid <- expand.grid(lma = lma, N_min = N_min) %>% tibble()
 
-# generate data
-lma <- rep(seq(0,0.25, 0.001), 5)
-N_min <- rep(c(1,5,10,15,20), each = length(lma)/5)
-carbon_balance <- pmap_dfr(list(lma, N_min), cycle_carbon) %>% 
+# grow plants
+carbon_balance <- pmap_dfr(list(grid[,1], grid[,2]), cycle_carbon) %>% 
   pivot_longer(cols = gain:net, names_to = "carbon", values_to = "flux")
 
-# viz
+# viz carbon balance
 ggplot(carbon_balance) + 
   geom_line(aes(x = sigma, y = flux, color = carbon)) + 
   facet_wrap(vars(N_min))
 
+# viz LAI
 ggplot(carbon_balance) + 
-  geom_line(aes(x = sigma, y = L))  + 
+  geom_line(aes(x = L, y = flux, color = carbon))  + 
   facet_wrap(vars(N_min))
+
+## Figure 3 Variations ---------
+
+list2env(p_list, envir = .GlobalEnv)
+
+calculate_n_ref_optimal <- function(y) {
+  # y = optimal lma
+  (A + B*y)/(k*c*y)*log(V/((A+B*y)^2*r/A + G/c))
+}
+
+calculate_n_ref_ess <- function(y){ ## S36, #EQ13
+  # y = ess lma
+  (A + B*y)/(k*c*sigma_min)*log(V/((A+B*y)^2*r/A + G/c))
+}
+
+# ESS Thresholds
+sigma_max <- (sqrt((V-G/c)/(r*A)) - 1)*A/B
+sigma_ess_min <- (sqrt(V*A/((exp(1)^2*r)))- A)/B
+## equivalent expression: (1/exp(1)*sqrt(V/(r*A))-1)*A/B
+
+n_1 <- (A + B*sigma_min)/(k*c*sigma_min)*log(V/((A+B*sigma_min)^2*r/A+ G/c))
+n_2 <- A/(exp(1)*k*c*sigma_min)*sqrt(V/(r*A))*log(V/(V/exp(1)^2 + G/c))
+
+## VIZ
+y <- seq(sigma_min,sigma_max,length = 20000) # sequence of LMA values 
+
+fig_3_transpose <- tibble(lma = y, 
+                          n_ref_ess = calculate_n_ref_ess(y), 
+                          n_ref_opt = calculate_n_ref_optimal(y)) 
+## ESS LMA
+ggplot(fig_3_transpose) + 
+  #thresholds
+  geom_hline(yintercept = n_1, color = "blue2", linetype = 2) + 
+  geom_hline(yintercept = n_2, color = "red", linetype = 2) + 
+  geom_vline(xintercept = sigma_min, color = "green4") + 
+  geom_vline(xintercept = sigma_max, color = "green4") + 
+  geom_line(aes(x=lma, y= n_ref_ess), size = 1) +
+  geom_segment(aes(x = sigma_min, xend = sigma_min, y = n_1, yend = 40), size = 1) + 
+  ylim(0,40) +
+  coord_flip() + 
+  theme_bw()
+
+
+## Optimal LMA
+ggplot(fig_3_transpose) + 
+  geom_line(aes(x =y, y= n_ref_opt)) + 
+  geom_hline(yintercept = n_1, color = "blue2") + 
+  geom_hline(yintercept = n_2, color = "red") + 
+  geom_vline(xintercept = 0.02, color = "green4") + 
+  geom_vline(xintercept = sigma_max, color = "green4") + 
+  ylim(0,40) + 
+  coord_flip() + 
+  theme_bw()
+
+## Optimal & ESS LMA together
+fig_3_transpose <- tibble(lma = y, 
+                          n_ref_ess = calculate_n_ref_ess(y), 
+                          n_ref_opt = calculate_n_ref_optimal(y)) %>% 
+  pivot_longer(cols = starts_with("n"), names_to = "strategy", values_to = "n_min")
+
+## ESS LMA
+ggplot(fig_3_transpose) + 
+  geom_line(aes(x=lma, y= n_min, color = strategy)) +
+  geom_hline(yintercept = n_1, color = "blue2") + 
+  geom_hline(yintercept = n_2, color = "red") + 
+  geom_vline(xintercept = 0.02, color = "green4") + 
+  geom_vline(xintercept = sigma_max, color = "green4") + 
+  ylim(0,40) +
+  coord_flip() + 
+  theme_bw()
+
+  
+
+## LMA optimal 
+out <- outer(n,y,function(n,y) (A + B*y)/(k*c*y)*log(V/((A+B*x)^2*r/A + G/c)) - n)
+contour(n,y,out,levels=0)
+title(main="Optimal LMA", xlab="N_min", ylab="LMA")
+
+## LMA ESS 
+out <- outer(n,y,function(n,y) (A + B*y)/(k*c*sigma_min)*log(V/((A+B*x)^2*r/A + G/c)) - n)
+contour(n,y,out,levels=2)
+title(main="ESS LMA", xlab="N_min", ylab="LMA")
 
 ## Scrap code
 
