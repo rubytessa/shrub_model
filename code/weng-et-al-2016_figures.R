@@ -124,9 +124,42 @@ sigma_ess_min <- (sqrt(V*A/((exp(1)^2*r)))- A)/B
 n_1 <- (A + B*sigma_min)/(k*c*sigma_min)*log(V/((A+B*sigma_min)^2*r/A+ G/c))
 n_2 <- A/(exp(1)*k*c*sigma_min)*sqrt(V/(r*A))*log(V/(V/exp(1)^2 + G/c))
 
-## VIZ
-y <- seq(sigma_min,sigma_max,length = 20000) # sequence of LMA values 
+## VIZ Plot 
+y <- seq(-sigma_max,sigma_max,length = 20000) # sequence of LMA values 
 
+fig_3_transpose <- tibble(lma = y, 
+                          n_ref_ess = calculate_n_ref_ess(y), 
+                          n_ref_opt = calculate_n_ref_optimal(y)) %>% 
+  pivot_longer(cols = starts_with("n"), names_to = "strategy", values_to = "n_min")
+
+fig_3_transpose$strategy = factor(fig_3_transpose$strategy,levels = c("n_ref_opt", "n_ref_ess")
+)
+
+## ESS LMA
+ggplot(fig_3_transpose) + 
+  # Thresholds
+  geom_hline(yintercept = n_1, color = "blue2", linetype =2) + 
+  geom_hline(yintercept = n_2, color = "red", linetype = 2) + 
+  geom_vline(xintercept = 0.02, color = "green4") + 
+  geom_vline(xintercept = sigma_max, color = "green4") + 
+  geom_vline(xintercept = sigma_ess_min, color = "green4", linetype = 2) + 
+  # LMA
+  geom_line(aes(x=lma, y= n_min)) +
+  #geom_segment(aes(x = sigma_min, xend = sigma_min, y = n_1, yend = 40)) + 
+  # Axes
+  ylim(0,40) +
+  xlim(0, sigma_max) + 
+  coord_flip() + 
+  facet_grid(rows = vars(strategy), 
+             labeller = labeller(strategy = c(n_ref_ess = "ESS", n_ref_opt = "optimal"))) + 
+  # Formatting 
+  theme_bw() + 
+  ggtitle("Figure 3") + 
+  labs(y = "Reference N mineralization rate", x = "LMA")
+
+
+### Plots 3a and 3b alone -----------
+y = seq(sigma_min,2,length = 2000)
 fig_3_transpose <- tibble(lma = y, 
                           n_ref_ess = calculate_n_ref_ess(y), 
                           n_ref_opt = calculate_n_ref_optimal(y)) 
@@ -154,37 +187,4 @@ ggplot(fig_3_transpose) +
   ylim(0,40) + 
   coord_flip() + 
   theme_bw()
-
-## Optimal & ESS LMA together
-fig_3_transpose <- tibble(lma = y, 
-                          n_ref_ess = calculate_n_ref_ess(y), 
-                          n_ref_opt = calculate_n_ref_optimal(y)) %>% 
-  pivot_longer(cols = starts_with("n"), names_to = "strategy", values_to = "n_min")
-
-## ESS LMA
-ggplot(fig_3_transpose) + 
-  geom_line(aes(x=lma, y= n_min, color = strategy)) +
-  geom_hline(yintercept = n_1, color = "blue2") + 
-  geom_hline(yintercept = n_2, color = "red") + 
-  geom_vline(xintercept = 0.02, color = "green4") + 
-  geom_vline(xintercept = sigma_max, color = "green4") + 
-  ylim(0,40) +
-  coord_flip() + 
-  theme_bw()
-
-  
-
-## LMA optimal 
-out <- outer(n,y,function(n,y) (A + B*y)/(k*c*y)*log(V/((A+B*x)^2*r/A + G/c)) - n)
-contour(n,y,out,levels=0)
-title(main="Optimal LMA", xlab="N_min", ylab="LMA")
-
-## LMA ESS 
-out <- outer(n,y,function(n,y) (A + B*y)/(k*c*sigma_min)*log(V/((A+B*x)^2*r/A + G/c)) - n)
-contour(n,y,out,levels=2)
-title(main="ESS LMA", xlab="N_min", ylab="LMA")
-
-## Scrap code
-
-# Add parameters to global environment
-list2env(setNames(as.list(params$value), params$parameter), envir = .GlobalEnv)
+ 
