@@ -164,7 +164,7 @@ fig_3_transpose <- tibble(lma = y,
                           n_ref_ess = calculate_n_ref_ess(y), 
                           n_ref_opt = calculate_n_ref_optimal(y)) 
 ## ESS LMA
-ggplot(fig_3_transpose) + 
+(fig_3 <- ggplot(fig_3_transpose) + 
   #thresholds
   geom_hline(yintercept = n_1, color = "blue2", linetype = 2) + 
   geom_hline(yintercept = n_2, color = "red", linetype = 2) + 
@@ -174,8 +174,7 @@ ggplot(fig_3_transpose) +
   geom_segment(aes(x = sigma_min, xend = sigma_min, y = n_1, yend = 40), size = 1) + 
   ylim(0,40) +
   coord_flip() + 
-  theme_bw()
-
+  theme_bw())
 
 ## Optimal LMA
 ggplot(fig_3_transpose) + 
