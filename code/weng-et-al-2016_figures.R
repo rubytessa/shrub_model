@@ -12,7 +12,6 @@ param_file <- "parameters/default_species.p"
 params <- read_csv(param_file)
 p_list <- setNames(as.list(params$value), params$parameter) # list
 
-
 ## Figure 1 Variations ----------
 
 ## Trait Linkages 
@@ -21,6 +20,17 @@ decompose_soil <- function(temp, moisture) {
   # not explored yet, so set to temp = 1, moisture = 1 below for a linear relationship
   rate <- temp*moisture
   return(rate)
+}
+
+mineralize_N <- function(sigma, total_N, parameter_list) {
+  
+  # assign parameters within local function environment
+  list2env(parameter_list, envir = environment())
+  tau_s = decompose_soil(temp, moisture)*s*sigma
+  
+  N_min = total_N/(lambda + tau_s)
+  
+  return(N_min)
 }
 
 link_traits <- function(sigma, parameter_list) {
@@ -85,12 +95,14 @@ cycle_carbon <- function(sigma, N_min, parameter_list = p_list) {
 
 # generate plants and environment
 lma <- seq(0,1.2, length = 20)
-N_min <- seq(0.05, 40, length = 20)
+N_min <- round(seq(0.05, 40, length = 20), digits = 2)
 grid <- expand.grid(lma = lma, N_min = N_min) %>% tibble()
 
 # grow plants
 carbon_balance <- pmap_dfr(list(grid[,1], grid[,2]), cycle_carbon) %>% 
-  pivot_longer(cols = gain:net, names_to = "carbon", values_to = "flux")
+  pivot_longer(cols = gain:net, names_to = "carbon", values_to = "flux") %>% 
+  ## for plotting aesthetics 
+  mutate(N_min_short = round(N_min, digits = 2 ))
 
 # viz carbon balance
 ggplot(carbon_balance) + 
@@ -158,7 +170,7 @@ ggplot(fig_3_transpose) +
   labs(y = "Reference N mineralization rate", x = "LMA")
 
 
-### Plots 3a and 3b alone -----------
+### Fig 3a and 3b alone -----------
 y = seq(sigma_min,2,length = 2000)
 fig_3_transpose <- tibble(lma = y, 
                           n_ref_ess = calculate_n_ref_ess(y), 
@@ -186,4 +198,14 @@ ggplot(fig_3_transpose) +
   ylim(0,40) + 
   coord_flip() + 
   theme_bw()
- 
+
+## Simulation Model -----
+
+p = p_list # parameters 
+t = seq(from=0,to=1000,by=0.1) # time
+
+Bd_0 = 1;
+Be_0 = 1;
+Nm = Ntot/
+y0 = c(Bd_0, Be_0, Nm_0) 
+
