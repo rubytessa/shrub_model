@@ -1,4 +1,4 @@
-# Description: Reproducing figures from Weng et al. 2016 GCB paper on predicting vegetation type
+# Description: Reproducing figures from Weng et al. 2017 GCB paper on predicting vegetation type
 # Author: Ruby
 # Date: 2022-03-21
 
@@ -90,24 +90,31 @@ cycle_carbon <- function(sigma, N_min, parameter_list = p_list) {
 }
 
 ## testing 
-#traits <- link_traits(0.05, p_list)
-#cycle_carbon(0.02, p_list, 0.05)
+traits <- link_traits(0.05, p_list)
+cycle_carbon(0.02, 0.05, p_list)
 
 # generate plants and environment
-lma <- seq(0,1.2, length = 20)
+lma <- seq(0.01,0.25, length = 100)
 N_min <- round(seq(0.05, 40, length = 20), digits = 2)
 grid <- expand.grid(lma = lma, N_min = N_min) %>% tibble()
 
 # grow plants
-carbon_balance <- pmap_dfr(list(grid[,1], grid[,2]), cycle_carbon) %>% 
+carbon_balance <- pmap_dfr(list(grid[,1], grid[,2],list(p_list)), cycle_carbon) %>% 
   pivot_longer(cols = gain:net, names_to = "carbon", values_to = "flux") %>% 
   ## for plotting aesthetics 
   mutate(N_min_short = round(N_min, digits = 2 ))
 
-# viz carbon balance
+# FIGURE 1a: viz Leaf Area 
+ggplot(carbon_balance) + 
+  geom_line(aes(x = sigma, y = L, color = carbon)) + 
+  facet_wrap(vars(N_min)) +
+  ylim(c(0,10))
+
+# FIGURE 1b: viz carbon balance
 ggplot(carbon_balance) + 
   geom_line(aes(x = sigma, y = flux, color = carbon)) + 
-  facet_wrap(vars(N_min))
+  facet_wrap(vars(N_min)) +
+  ylim(c(-1,5))
 
 # viz LAI
 ggplot(carbon_balance) + 
