@@ -1,0 +1,272 @@
+---
+title: "Nested Resource Competition Models"
+author: "Ruby An"
+date: "2023-02-01"
+output:
+  html_document:
+    number_sections: true
+  pdf_document:
+    number_sections: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warnings = FALSE)
+
+# load required libraries 
+library(deSolve)
+library(seqinr)
+library(tidyverse)
+library(cowplot)
+library(patchwork)
+library(tinytex)
+
+# set plot theme
+theme_set(theme_cowplot())
+
+# colors for plotting
+color_palette <- c("#ffe900","#658c61") 
+color_states <- c("#436340","#658c61","#86c97f")
+
+# source in models 
+source('code/Models.R') # source in C-R models
+```
+
+# Introduction
+
+This file is for conceptually and quantitatively exploring the basis of resource competition theory (Tilman 1982, 1988). Some motivating questions include: 
+
+a) From simple models of competition for resources, what qualititave system behaviors and predictions emerge? 
+b) How do we understand community dynamics in light of resource competition theory in an era of global change? 
+
+This document includes descriptions of models, equations, and assumptions proceeding from simple to more complex dynamics. Each model includes several plots to enable comparison across levels of increasing complexity. 
+
+1. Diagrams/Equations (with verbal description)
+2. Timeseries plots 
+3. Consumer/resource phase planes 
+4. Bifurcation plot based on a parameter (list of possible dynamics)
+5. Summary plot (model outcome heatmap w/two parameters)
+ 
+# One consumer, one resource
+
+## Model Description
+A simple model for a single species of plant growing with one resource. This is a basic set of equations for modeling one consumer ($B$) and one resource ($R$). 
+
+$$
+\begin{aligned}
+  \frac{dB}{dt} &= f \frac{gR}{1+ ghR}B - L B \\
+  \frac{dR}{dt} &= r - \frac{gR}{1+ ghR}B \\
+\end{aligned}
+$$
+Total biomass ($B$) is determined by the net balance between growth and loss rates. The growth rate per unit biomass is a function of resource availability, given by $G(R) = f \frac{g R}{1+ g h R}$, where $f$ is the resource conversion efficiency, $g$ is uptake rate constant, and $h$ controls the saturation rate of uptake. $G(R)$ is linear when $h = 0$, and saturates with increasing $R$ when $h > 0$. This model assumes a fixed loss rate $L$ per unit biomass. 
+
+## Timeseries & Phase Plane
+We can integrate one instance. Analytical solutions predict values of `B` and `R` at equilbirium. 
+```{r expmt1}
+# state variable values (initial values at beginning of "experiments")
+i.state <- c(B=2.5, R=3) 
+
+# parameter values
+r <- 0.5 # supply rate of resource
+g <- 0.5 # growth rate
+h <- 0.5 # handling time
+f <- 1 # conversion efficiency of consumer
+L <- 0.7 # loss rate of consumer 
+p <- list(r=r, g=g, f=f, h=h, L=L) # full parameter list 
+
+## adjust parameters
+p.tseries <- list(r=r, g=g, f=f, L=L, h=h) 
+t.seq <- seq(0, 100, by = 0.1)
+tseries <- ode(i.state,t.seq, one_sp_one_resource, p.tseries)
+
+# adjust resource and consumer isoclines / # analytical equilibrium resource levels 
+state.eq <- with(as.list(p.tseries), {
+  R.star <- L/(f*g-h*g*L)
+  B.star <- r/(g*R.star)
+  
+  return(list(R.star = R.star, B.star = B.star))
+})
+R.star <- state.eq$R.star
+B.star <- state.eq$B.star
+
+## plot dynamics around consumer and resource isoclines.
+
+## time series
+plot_temporal_dynamics <- ggplot(as.data.frame(tseries), aes(x = time)) +
+  geom_line(aes(y = R, color = "Resource")) + 
+  geom_line(aes(y = B, color = "Consumer Biomass")) +
+  # analytical lines
+  geom_hline(aes(yintercept = R.star, color = "Resource"), linetype = 2) + 
+  geom_hline(aes(yintercept = B.star, color = "Consumer Biomass"), linetype = 2) + 
+  ylab("Abundance") +
+  xlab("Time") +
+  scale_color_manual(values = color_palette, name = "") + 
+  scale_color_viridis_d(name = "", direction = -1)
+
+## Plot phaseplane 
+# make arrow data
+plot_arrows <- as.data.frame(cbind(tseries[-Time, ], tseries[-1, ]))
+colnames(plot_arrows)[4:6] <- c("time.n1","B.n1","R.n1")
+
+# calculate isocline curves 
+
+## create resource isocline
+R.iso <- expression(L/(f*g-h*g*L)) # set R = 0 and solved algebraically
+R.star <- eval(R.iso)
+B.iso <- expression(r/(g*L/(f*g-h*g*L)))
+B.star <- eval(B.iso)
+
+plot_isocline_dynamics <- ggplot() + 
+  geom_segment(data = plot_arrows, aes(x = R, xend = R.n1, y = B, yend = B.n1), arrow = arrow(length = unit(0.1,"cm"))) +
+  geom_point(aes(x = i.state[2], y = i.state[1]), shape = 21, fill = "white") +
+  xlab("Resource") +
+  ylab("Consumer Biomass") +  
+  geom_hline(aes(yintercept = B.star, color = "B isocline")) + 
+  geom_vline(aes(xintercept = R.star, color = "R isocline")) + 
+  scale_color_manual(values = color_palette, name = "") 
+
+plot_temporal_dynamics / plot_isocline_dynamics
+```
+
+## Parameter Scan 
+
+Summary plot of the dynamics/equilibrium values of the model. 
+
+```{r}
+# Set-up storage matrices 
+outlist <- list()
+n = 100 # number of steps to break down the variables
+out_end <- tibble(B_end = rep(NA, n), R_end = rep(NA,n)) # data frame of outputs
+
+## Assign parameters in grid - choose two variables to scan over (r, L)
+r = seq(0,5, length.out = n) #resource supply rate 
+L = seq(0,1, length.out = n) #loss rate
+plist <- expand.grid(r=r,L=L) %>% bind_cols(g = rep(1, n = n^2), f = rep(1, n = n^2), h = rep(1, n = n^2))
+
+## Analytical solutions 
+states.summary <- plist %>% 
+  mutate(R.star = L/(f*g-h*g*L),
+         B.star = r/(g*R.star))
+
+# Viz Heatmap of bimoass for r vs L 
+ggplot(states.summary, aes(x=L, y=r)) + 
+  geom_raster(aes(fill = B.star)) + 
+  scale_fill_continuous(limits = c(0,20),) + 
+  theme_minimal()
+
+## Numerical solutions
+# 
+# #initial conditions 
+# t = seq(from=0,to=100,by=0.5)
+# B_0 = 5
+# R_0 = 10
+# y0 = c(B_0, R_0)
+# 
+# # Integrate & store output 
+# for (i in 1:nrow(plist)) {
+#   outlist[[i]] <- ode(y = y0, parms = plist[i,], func = one_sp_one_resource, times = t)
+#   out_end[i, 1] <- outlist[[i]][,2] %>% tail(n=1)
+#   out_end[i, 2] <- outlist[[i]][,3] %>% tail(n=1)
+# }
+# 
+# out_full <- bind_cols(plist, out_end) %>% 
+#   # add analytical solutions
+#   mutate(R_star = L/(g*f)) %>% 
+#   mutate(B_star = r/(g*R_star))
+```
+
+Biomass heatmap shows that biomass at equilibrium increases with resource supply rate `r` and decreases with loss rate `L`. 
+```{r}
+
+
+
+# Line plot of B_end vs L 
+states.summary %>% filter(r %in% c(min(r), r[which.min(abs(r - median(r)))], max(r))) %>% # choose specific r values 
+  ggplot(., aes(x=L, y = B.star)) + 
+  geom_line(aes(color = factor(r)))
+
+```
+
+We can visualize specific instances as well. 
+```{r}
+## Plot timeseries for a specific value
+m <- 50
+out_plot_p <- out_full[m,] # parameters
+out_plot <- as_tibble(outlist[[m]]) # timeseries
+colnames(out_plot) <- c("time", "B", "R")
+
+# Viz 
+out_viz <- out_plot %>% pivot_longer(cols = B:R, names_to = "variable", values_to = "va1/lue")
+ggplot(out_viz) + geom_line(aes(x = time, y = value, color = variable)) + 
+  theme_bw() + 
+  geom_hline(aes(yintercept = out_plot_p$R_star, color = "R"), linetype = 2) + 
+  geom_hline(aes(yintercept = out_plot_p$B_star, color = "B"), linetype = 2)
+```
+
+
+## Analytical Solution (R*) 
+
+In this system of equations, $R^*$, or the resource level where biomass growth exactly balances loss, is by definition the resource level $R$ at which $\frac{dB}{dt} = 0$. Graphically, this is where the growth rate curve $G(R)$ curve crosses the loss-rate curve $L$. 
+
+```{r parameters}
+# Plot of isocline calculation
+with(as.list(p),{ # equation components as a function of resource level
+  growth_curves <- tibble(R = seq(0,15, length.out=100), 
+                          per_capita_growth = f*g*R/(1 + g*h*R), 
+                          per_capita_mortality = rep(L, n=100))
+  
+  R_star <- L/(f*g-h*g*L)
+  
+  ggplot(growth_curves) + 
+    geom_line(aes(x=R, y=per_capita_growth)) + 
+    geom_line(aes(x=R, y=per_capita_mortality), linetype =2) + 
+    geom_vline(aes(xintercept = R_star),linetype=3)
+}
+)
+
+```
+
+For this system of equatios, $R*$ can be analytically calculated as $R* = \frac{L}{fg - hgL}$. This implies that $R*$ the minimum resource level required to sustain a non-zero biomass increases with the loss rate ($L$) of any system. 
+
+```{r}
+p_values <- list(0.2, 0.5, 1, 0.5, 0.5)
+p_names <- c("r", "g", "f", "L", "h") 
+p <- setNames(p_values, p_names) 
+
+with(as.list(p),{
+  L = seq(0,1.5, length.out = 1000)
+  R_star <- L/(f*g-h*g*L)
+  
+  ggplot(tibble(L, R_star)) + 
+    geom_line(aes(x=L, y=R_star)) 
+}
+)
+```
+
+The equilibrium resource level required to sustain $B > 0$ is given by $R*$ and is independent of the resource supply rate. The amount of biomass $B*$ that can be sustained depends on the resource supply rate. At a certain loss rate ($L = f/h$), $R*$ goes to infinity and no biomass can be sustained no matter how much resource is supplied. 
+```{r}
+p_values <- list(0.2, 0.5, 1, 0.5, 0.1)
+p_names <- c("r", "g", "f", "L", "h") 
+p <- setNames(p_values, p_names) 
+
+p_eq <- with(as.list(p),{
+  n = 1000
+  r = seq(0,10, length.out = 10) #resource supply rate 
+  L = seq(0,10, length.out = n) #loss rate
+  p_eq <- expand.grid(r=r,L=L) %>% bind_cols(g = rep(1, n = n^2), f = rep(1, n = n^2)) %>% 
+    mutate(R_star = L/(f*g-h*g*L), B_star = r/(g*R_star))
+  
+  return(p_eq)
+}
+)
+
+out_eq <- p_eq %>% pivot_longer(cols= R_star:B_star, names_to = "variable", values_to = "value")
+
+  ggplot(out_eq) + 
+    geom_line(aes(x=L, y=value, linetype = variable, color = factor(r))) + 
+    scale_x_continuous(limits = c(0,10)) + 
+    scale_y_continuous(limits = c(-5, 25)) + 
+    scale_color_viridis_d(direction = -1) + 
+    theme_minimal()
+```

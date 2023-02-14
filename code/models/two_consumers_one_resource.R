@@ -12,7 +12,6 @@ one_consumer_one_resource_decomp <- function(t,y,p) {
   
   n1 = y[1]
   R = y[2]
-
   
   with(as.list(p),{
     dR.dt = r*d1*n1-a1*c1*n1*R;
@@ -112,3 +111,4 @@ ggplot(viz_data, aes(x = time, y = value)) +
   # geom_hline(yintercept = n1, color = "red") + 
   # geom_hline(yintercept = n2, color = "green") + 
   theme_minimal()
+
