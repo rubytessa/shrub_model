@@ -12,7 +12,7 @@ editor_options:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE, warnings = FALSE)
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message=FALSE)
 
 # load required libraries 
 library(deSolve)
@@ -26,7 +26,7 @@ library(tinytex)
 theme_set(theme_cowplot())
 
 # colors for plotting
-color_palette <- c("#ffe900","#658c61") 
+color_palette <- c("darkblue", "#658c61") 
 color_states <- c("#436340","#658c61","#86c97f")
 
 # source in models 
@@ -37,14 +37,14 @@ source('code/Models.R') # source in C-R models
 
 This file is for conceptually and quantitatively exploring the basis of resource competition theory (Tilman 1982, 1988). Some motivating questions include: 
 
-a) From simple models of competition for resources, what qualititave system behaviors and predictions emerge? 
-b) How do we understand community dynamics in light of resource competition theory in an era of global change? 
+a) From simple models of competition for resources, what qualititave system behaviors emerge? 
+b) How do we understand community dynamics in an era of global change in light of resource competition theory? 
 
 This document includes descriptions of models, equations, and assumptions proceeding from simple to more complex dynamics. Each model includes several plots to enable comparison across levels of increasing complexity. 
 
 1. Diagrams/Equations (with verbal description)
-2. Timeseries plots 
-3. Consumer/resource phase planes 
+2. Analytical Solution
+3. Timeseries plots / Consumer/resource phase planes 
 4. Bifurcation plot based on a parameter (list of possible dynamics)
 5. Summary plot (model outcome heatmap w/two parameters)
  
@@ -61,29 +61,134 @@ $$
 $$
 Total biomass ($B$) is determined by the net balance between growth and loss rates. The growth rate per unit biomass is a function of resource availability, given by $G(R) = f \frac{g R}{1+ g h R}$, where $f$ is the resource conversion efficiency, $g$ is uptake rate constant, and $h$ controls the saturation rate of uptake. $G(R)$ is linear when $h = 0$, and saturates with increasing $R$ when $h > 0$. This model assumes a fixed loss rate $L$ per unit biomass. 
 
-## Timeseries & Phase Plane
-We can integrate one instance. Analytical solutions predict values of `B` and `R` at equilbirium. 
-```{r expmt1}
-# state variable values (initial values at beginning of "experiments")
-i.state <- c(B=2.5, R=3) 
+### Set Parameter Values
+The following plots use the parameter values listed below. 
+```{r}
+# adjust parameter values 
+p.list <- list(
+  r=0.5, # supply rate of resource
+  g=0.5, # growth rate
+  f=1,   # conversion efficency of consumer
+  h=0, # handling time
+  L=0.7  # biomass loss rate
+  )
 
-# parameter values
-r <- 0.5 # supply rate of resource
-g <- 0.5 # growth rate
-h <- 0.5 # handling time
-f <- 1 # conversion efficiency of consumer
-L <- 0.7 # loss rate of consumer 
-p <- list(r=r, g=g, f=f, h=h, L=L) # full parameter list 
+p.table <- tibble(name = names(p.list), 
+                  value = as.numeric(p.list),
+                  description = c("resource supply rate", "per unit growth rate", "resource conversion efficiency", "uptake saturation", "biomass loss rate"))
+
+knitr::kable(p.table)
+
+```
+
+## Analytical Solution 
+
+For this system of equations, $R^*$ can be analytically calculated by setting $\frac{dB}{dt} = 0$. By this definition, $R^*$ is the resource level where biomass growth exactly balances loss and thus the minimum resource level required to sustain a non-zero biomass. 
+
+```{r}
+
+# Plot of isocline calculation
+plot_R.star_calc <- with(as.list(p.list),{ # equation components as a function of resource level
+  growth_curves <- tibble(R = seq(0,15, length.out=100), 
+                          per_capita_growth = f*g*R/(1 + g*h*R), 
+                          per_capita_mortality = rep(L, n=100))
+  
+  R_star <- L/(f*g-h*g*L)
+  
+  ggplot(growth_curves) + 
+    geom_line(aes(x=R, y=per_capita_growth)) + 
+    geom_line(aes(x=R, y=per_capita_mortality), linetype =2) + 
+    geom_vline(aes(xintercept = R_star),linetype=3) + 
+    labs(x = "R", y="G(R)", title = "Calculating R*")
+}
+)
+
+plot_R.star_calc
+```
+
+Graphically, the value of $R^*$ is where the growth rate curve $G(R)$ curve crosses the loss-rate curve $L$. We see that increasing the loss rate (horizontal line) increases the value of $R^*$ given the monotonically increasing curve $G(R)$. 
+
+```{r}
+# Plot dependence of R* on parameter L
+L.final <- 3
+plot_R.star_L <- with(as.list(p.list),{
+  L = seq(0,1.5, length.out = 1000)
+  R_star <- L/(f*g-h*g*L)
+  
+  ggplot(tibble(L, R_star)) + 
+    geom_line(aes(x=L, y=R_star)) +
+    geom_vline(aes(xintercept = f/h), linetype=2) + # Loss rate where R* goes to infinity 
+    labs(x = "Loss Rate (L)", y="R*", title = "R* dependence on L") 
+}
+)
+
+plot_R.star_L + coord_cartesian(xlim = c(0, L.final))
+```
+
+The analytical solution of this simple system, $R^* = \frac{L}{fg - hgL}$ implies that $R^*$ increases with the loss rate ($L$). Note that $R^*$ (but not $B^*$) is independent of the resource supply rate ($r$). Introducing a handling time term $h > 0$ means that at a certain loss rate ($L = f/h$ = `r p.list$f/p.list$h`), the value of $R^*$ goes to infinity. 
+
+```{r}
+# Plot dependence of B* on parameter L 
+eq.state <- with(as.list(p.list),{
+  n = 1000
+  r = seq(0,10, length.out = 10) #resource supply rate 
+  L = seq(0,L.final, length.out = n) #loss rate
+  p_eq <- expand.grid(r=r,L=L) %>% bind_cols(g = rep(g, n = n^2), f = rep(f, n = n^2), h = rep(h, n = n^2)) %>% 
+    mutate(R_star = L/(f*g-h*g*L), B_star = r/(g*R_star))
+  
+  return(p_eq)
+}) %>% pivot_longer(cols= R_star:B_star, names_to = "variable", values_to = "value")
+
+plot_B.star_L <- ggplot(eq.state) + 
+  geom_line(aes(x=L, y=value, linetype = variable, color = factor(r))) + 
+  #scale_x_continuous(limits = c(0,10)) + 
+  scale_y_continuous(limits = c(-5, 25)) + 
+  scale_color_viridis_d(direction = -1, 
+                        labels = function(x) round(as.numeric(x), 2),) + 
+  labs(color = "Resoure Supply Rate (r)", 
+       linetype = "Variable",
+       x = "Loss Rate (L)", 
+       y = "Equilibrium Value",
+       title = "B* dependence on L")
+
+plot_B.star_L
+```
+
+The amount of biomass $B^*$ that can be sustained depends on the resource supply rate (r). 
+
+## Timeseries & Phase Plane
+We can numerically integrate one instance. Analytical solutions predict values of `B` and `R` at equilbirium (dashed lines).
+```{r}
+# state variable values (initial values at beginning of "experiments")
+i.state <- c(R=5, B=4) 
+
+# parameter values 
+# p.list <- list(
+#   r=0.5, # supply rate of resource
+#   g=0.5, # growth rate
+#   f=1,   # conversion efficency of consumer 
+#   h=0.5, # handling time 
+#   L=1 # biomass loss rate
+#   ) 
+
+# default parameter values
+# r <- 0.5 # supply rate of resource
+# g <- 0.5 # growth rate
+# f <- 1   # conversion efficiency of consumer
+# h <- 0.5 # handling time
+# L <- 0.7 # loss rate of consumer 
 
 ## adjust parameters
-p.tseries <- list(r=r, g=g, f=f, L=L, h=h) 
-t.seq <- seq(0, 100, by = 0.1)
+p.tseries <- p.list
+# duration
+Time <- 100
+t.seq <- seq(0, Time, by = 0.01)
 tseries <- ode(i.state,t.seq, one_sp_one_resource, p.tseries)
 
-# adjust resource and consumer isoclines / # analytical equilibrium resource levels 
+# analytical equilibrium resource levels 
 state.eq <- with(as.list(p.tseries), {
   R.star <- L/(f*g-h*g*L)
-  B.star <- r/(g*R.star)
+  B.star <- r*f/L 
   
   return(list(R.star = R.star, B.star = B.star))
 })
@@ -101,35 +206,31 @@ plot_temporal_dynamics <- ggplot(as.data.frame(tseries), aes(x = time)) +
   geom_hline(aes(yintercept = B.star, color = "Consumer Biomass"), linetype = 2) + 
   ylab("Abundance") +
   xlab("Time") +
-  scale_color_manual(values = color_palette, name = "") + 
-  scale_color_viridis_d(name = "", direction = -1)
+  scale_color_manual(values = color_palette, name = "") 
 
 ## Plot phaseplane 
 # make arrow data
 plot_arrows <- as.data.frame(cbind(tseries[-Time, ], tseries[-1, ]))
-colnames(plot_arrows)[4:6] <- c("time.n1","B.n1","R.n1")
+colnames(plot_arrows)[4:6] <- c("time.n1","R.n1", "B.n1")
 
 # calculate isocline curves 
 
-## create resource isocline
-R.iso <- expression(L/(f*g-h*g*L)) # set R = 0 and solved algebraically
-R.star <- eval(R.iso)
-B.iso <- expression(r/(g*L/(f*g-h*g*L)))
-B.star <- eval(B.iso)
-
 plot_isocline_dynamics <- ggplot() + 
   geom_segment(data = plot_arrows, aes(x = R, xend = R.n1, y = B, yend = B.n1), arrow = arrow(length = unit(0.1,"cm"))) +
-  geom_point(aes(x = i.state[2], y = i.state[1]), shape = 21, fill = "white") +
+  geom_point(aes(x = i.state[1], y = i.state[2]), shape = 21, fill = "white") +
   xlab("Resource") +
   ylab("Consumer Biomass") +  
-  geom_hline(aes(yintercept = B.star, color = "B isocline")) + 
-  geom_vline(aes(xintercept = R.star, color = "R isocline")) + 
+  geom_hline(aes(yintercept = B.star, color = "B isocline"), linetype=2) + 
+  geom_vline(aes(xintercept = R.star, color = "R isocline"), linetype=2) + 
   scale_color_manual(values = color_palette, name = "") 
 
+# patchwork plots 
 plot_temporal_dynamics / plot_isocline_dynamics
 ```
 
-## Parameter Scan 
+## Equilibrium Outcomes
+
+### Parameter Scan 
 
 Summary plot of the dynamics/equilibrium values of the model. 
 
@@ -147,7 +248,7 @@ plist <- expand.grid(r=r,L=L) %>% bind_cols(g = rep(1, n = n^2), f = rep(1, n = 
 ## Analytical solutions 
 states.summary <- plist %>% 
   mutate(R.star = L/(f*g-h*g*L),
-         B.star = r/(g*R.star))
+         B.star = r*f/L)
 
 # Viz Heatmap of bimoass for r vs L 
 ggplot(states.summary, aes(x=L, y=r)) + 
@@ -174,99 +275,259 @@ ggplot(states.summary, aes(x=L, y=r)) +
 #   # add analytical solutions
 #   mutate(R_star = L/(g*f)) %>% 
 #   mutate(B_star = r/(g*R_star))
+
+## Plot timeseries for a specific value
+# m <- 50
+# out_plot_p <- out_full[m,] # parameters
+# out_plot <- as_tibble(outlist[[m]]) # timeseries
+# colnames(out_plot) <- c("time", "B", "R")
+# 
+# # Viz 
+# out_viz <- out_plot %>% pivot_longer(cols = B:R, names_to = "variable", values_to = "va1/lue")
+# ggplot(out_viz) + geom_line(aes(x = time, y = value, color = variable)) + 
+#   theme_bw() + 
+#   geom_hline(aes(yintercept = out_plot_p$R_star, color = "R"), linetype = 2) + 
+#   geom_hline(aes(yintercept = out_plot_p$B_star, color = "B"), linetype = 2)
 ```
 
 Biomass heatmap shows that biomass at equilibrium increases with resource supply rate `r` and decreases with loss rate `L`. 
 ```{r}
 
-
-
 # Line plot of B_end vs L 
-states.summary %>% filter(r %in% c(min(r), r[which.min(abs(r - median(r)))], max(r))) %>% # choose specific r values 
+states.summary %>% 
+  filter(r %in% c(min(r), r[which.min(abs(r - median(r)))], max(r))) %>% # choose specific r values 
   ggplot(., aes(x=L, y = B.star)) + 
-  geom_line(aes(color = factor(r)))
+  geom_line(aes(color = factor(r))) + 
+  scale_color_discrete(labels = function(x) round(as.numeric(x), 2)) + 
+  labs(color = "Supply Rate (r)", 
+       x = "Loss Rate (L)", 
+       y = "Equilibrium Biomass")
 
 ```
 
-We can visualize specific instances as well. 
+
+# Two consumers, one resource
+
+## Model Description
+A simple model for two species ($B_1$ and $B_2$) competing for one resource ($R$). Consumers interact solely by competing for a shared resource. 
+
+$$
+\begin{aligned}
+  \frac{dB_{1}}{dt} &= f_{1} \frac{g_{1}R}{1+ g_{1}h_{1}R}B_{1} - L_{1} B_{1} \\
+  \frac{dB_{2}}{dt} &= f_{2} \frac{g_{2}R}{1+ g_{2}h_{2}R}B_{2} - L_{2} B_{2} \\
+  \frac{dR}{dt} &= r - \frac{g_{1}R}{1+ g_{1}h_{1}R}B_{1} - \frac{g_{2}R}{1+ g_{2}h_{2}R}B_{2}\\
+\end{aligned}
+$$
+
+Parameters are as described in the model for one consumer and one resource. 
+
+### Set Parameter Values
+The following plots use the parameter values listed below. 
 ```{r}
-## Plot timeseries for a specific value
-m <- 50
-out_plot_p <- out_full[m,] # parameters
-out_plot <- as_tibble(outlist[[m]]) # timeseries
-colnames(out_plot) <- c("time", "B", "R")
+# adjust parameter values 
+p.list <- list(
+  r=0.5, # supply rate of resource
+  
+  ## species 1
+  g1=1, # growth rate
+  f1=0.5,   # conversion efficency of consumer
+  h1=0.75, # handling time
+  L1=0.5,  # biomass loss rate
+  
+  ## species 2
+  g2=0.25, # growth rate
+  f2=0.5,   # conversion efficency of consumer
+  h2=0.5, # handling time
+  L2=0.5  # biomass loss rate
+  )
 
-# Viz 
-out_viz <- out_plot %>% pivot_longer(cols = B:R, names_to = "variable", values_to = "va1/lue")
-ggplot(out_viz) + geom_line(aes(x = time, y = value, color = variable)) + 
-  theme_bw() + 
-  geom_hline(aes(yintercept = out_plot_p$R_star, color = "R"), linetype = 2) + 
-  geom_hline(aes(yintercept = out_plot_p$B_star, color = "B"), linetype = 2)
+p.table <- tibble(name = names(p.list), 
+                  value = as.numeric(p.list),
+                  description = c("resource supply rate", 
+                                  "sp. 1 per unit growth rate", 
+                                  "sp. 1 resource conversion efficiency", 
+                                  "sp. 1 uptake saturation", 
+                                  "sp. 1 biomass loss rate",
+                                  "sp. 2 per unit growth rate", 
+                                  "sp. 2 resource conversion efficiency", 
+                                  "sp. 2 uptake saturation", 
+                                  "sp. 2 biomass loss rate"))
+
+knitr::kable(p.table)
+
 ```
 
 
-## Analytical Solution (R*) 
+## Analytical Solution 
 
-In this system of equations, $R^*$, or the resource level where biomass growth exactly balances loss, is by definition the resource level $R$ at which $\frac{dB}{dt} = 0$. Graphically, this is where the growth rate curve $G(R)$ curve crosses the loss-rate curve $L$. 
+For this system of equations, $R^*$ can be analytically calculated by setting $\frac{dB}{dt} = 0$. By this definition, $R^*$ is the resource level where biomass growth exactly balances loss and thus the minimum resource level required to sustain a non-zero biomass. 
 
-```{r parameters}
+```{r}
+
 # Plot of isocline calculation
-with(as.list(p),{ # equation components as a function of resource level
+with(as.list(p.list),{ # equation components as a function of resource level
   growth_curves <- tibble(R = seq(0,15, length.out=100), 
-                          per_capita_growth = f*g*R/(1 + g*h*R), 
-                          per_capita_mortality = rep(L, n=100))
+                          per_capita_growth_sp1 = f1*g1*R/(1 + g1*h1*R), 
+                          per_capita_growth_sp2 = f2*g2*R/(1 + g2*h2*R), 
+                          per_capita_mortality_sp1 = rep(L1, n=100),
+                          per_capita_mortality_sp2 = rep(L2, n=100))  %>% pivot_longer(cols = 2:5, names_to = "name", values_to = "value") %>% 
+  mutate(species = str_extract(name, "[a-z]{2}[0-9]"), # extract species 
+         rate = str_split(name, pattern = "_", simplify = T)[,3]) # extract rate
   
-  R_star <- L/(f*g-h*g*L)
-  
-  ggplot(growth_curves) + 
-    geom_line(aes(x=R, y=per_capita_growth)) + 
-    geom_line(aes(x=R, y=per_capita_mortality), linetype =2) + 
-    geom_vline(aes(xintercept = R_star),linetype=3)
+  R.star.1 <- L1/(f1*g1 - g1*h1*L1)
+  R.star.2 <- L2/(f2*g2 - g2*h2*L2)
+
+  ggplot(growth_curves, aes(x=R, y = value, linetype = rate, color = species)) + 
+  geom_line() + 
+  geom_vline(aes(xintercept = R.star.1, color = "sp1"), linetype = 2) + # B1 R*
+  geom_vline(aes(xintercept = R.star.2, color = "sp2"), linetype = 2) + # B2 R*
+  labs(x = "R", y="Growth|Loss Rate ", title = "Calculating R*")
 }
 )
-
+  
 ```
 
-For this system of equatios, $R*$ can be analytically calculated as $R* = \frac{L}{fg - hgL}$. This implies that $R*$ the minimum resource level required to sustain a non-zero biomass increases with the loss rate ($L$) of any system. 
+The species with the lower $R^*$ will outcompete the other. 
 
+## Timeseries & Phase Plane
+We can numerically integrate one instance. Analytical solutions predict values of $B_1$, $B_2$ and $R$ at equilbirium (dashed lines).
 ```{r}
-p_values <- list(0.2, 0.5, 1, 0.5, 0.5)
-p_names <- c("r", "g", "f", "L", "h") 
-p <- setNames(p_values, p_names) 
+# state variable values (initial values at beginning of "experiments")
+i.state <- c(R=5, B1=4, B2=10) 
 
-with(as.list(p),{
-  L = seq(0,1.5, length.out = 1000)
-  R_star <- L/(f*g-h*g*L)
+## adjust parameters
+p.tseries <- p.list
+# duration
+Time <- 100
+t.seq <- seq(0, Time, by = 0.01)
+tseries <- ode(i.state,t.seq, two_sp_one_resource, p.tseries)
+
+# analytical equilibrium resource levels 
+state.eq <- with(as.list(p.tseries), {
+  R.star.1 <- L1/(f1*g1 - g1*h1*L1)
+  R.star.2 <- L2/(f2*g2 - g2*h2*L2)
+  B1.star <- r*f1/L1 
+  B2.star <- r*f2/L2
   
-  ggplot(tibble(L, R_star)) + 
-    geom_line(aes(x=L, y=R_star)) 
-}
-)
+  return(list(R.star.1 = R.star.1, 
+              R.star.2 = R.star.2, 
+              B1.star = B1.star,
+              B2.star = B2.star
+              ))
+})
+R.star.1 <- state.eq$R.star.1
+B1.star <- state.eq$B1.star
+
+## plot dynamics around consumer and resource isoclines.
+data.tseries <- as.data.frame(tseries) %>% pivot_longer(cols = c(R:B2), names_to = "variable", values_to = "value")
+
+## time series
+plot_temporal_dynamics <- ggplot(data.tseries, aes(x = time, y = value, color = variable)) +
+  geom_line() + 
+  # analytical lines
+  geom_hline(aes(yintercept = R.star.1, color = "R"), linetype = 3) + 
+  geom_hline(aes(yintercept = B1.star, color = "B1"), linetype = 2) + 
+  geom_hline(aes(yintercept = state.eq$R.star.2, color = "R"), linetype = 4) + 
+  geom_hline(aes(yintercept = state.eq$B2.star, color = "B2"), linetype = 2) + 
+  ylab("Abundance") +
+  xlab("Time")
+
+plot_temporal_dynamics
+
+## Plot phaseplane 
+# make arrow data
+plot_arrows <- as.data.frame(cbind(tseries[-Time, ], tseries[-1, ]))
+colnames(plot_arrows)[5:8] <- c("time.n1","R.n1", "B1.n1", "B2.n1")
+
+# calculate isocline curves 
+
+plot_isocline_dynamics <- ggplot() + 
+  geom_segment(data = plot_arrows, aes(x = R, xend = R.n1, y = B1, yend = B1.n1, color = "B1"), arrow = arrow(length = unit(0.1,"cm"))) +
+  geom_segment(data = plot_arrows, aes(x = R, xend = R.n1, y = B2, yend = B2.n1, color = "B2"), arrow = arrow(length = unit(0.1,"cm"))) +
+  geom_point(aes(x = i.state[1], y = i.state[2], color = "B1"), shape = 21, fill = "white") +
+  geom_point(aes(x = i.state[1], y = i.state[3], color = "B2"), shape = 21, fill = "white") +
+  xlab("Resource") +
+  ylab("Consumer Biomass") +  
+  geom_hline(aes(yintercept = state.eq$B1.star, color = "B1"), linetype=2) + 
+  geom_hline(aes(yintercept = state.eq$B2.star, color = "B2"), linetype=2) + 
+  geom_vline(aes(xintercept = state.eq$R.star.1, color = "B1"), linetype=3) +
+  geom_vline(aes(xintercept = state.eq$R.star.2, color = "B2"), linetype=4) 
+
+
+# patchwork plots 
+plot_temporal_dynamics / plot_isocline_dynamics
 ```
 
-The equilibrium resource level required to sustain $B > 0$ is given by $R*$ and is independent of the resource supply rate. The amount of biomass $B*$ that can be sustained depends on the resource supply rate. At a certain loss rate ($L = f/h$), $R*$ goes to infinity and no biomass can be sustained no matter how much resource is supplied. 
+## Equilibrium Outcomes 
+
+There are a number of possible outcomes at equilibrium. 
+
+  1. No species can be sustained. 
+  2. R* (sp1) < R* (sp2) - Sp. 1 wins
+  3. R* (sp2) < R* (sp1) - Sp. 2 wins
+
+### Parameter Scan 
 ```{r}
-p_values <- list(0.2, 0.5, 1, 0.5, 0.1)
-p_names <- c("r", "g", "f", "L", "h") 
-p <- setNames(p_values, p_names) 
+# Set-up storage matrices 
+outlist <- list()
+n = 100 # number of steps to break down the variables
+out_end <- tibble(B_end = rep(NA, n), R_end = rep(NA,n)) # data frame of outputs
 
-p_eq <- with(as.list(p),{
-  n = 1000
-  r = seq(0,10, length.out = 10) #resource supply rate 
-  L = seq(0,10, length.out = n) #loss rate
-  p_eq <- expand.grid(r=r,L=L) %>% bind_cols(g = rep(1, n = n^2), f = rep(1, n = n^2)) %>% 
-    mutate(R_star = L/(f*g-h*g*L), B_star = r/(g*R_star))
-  
-  return(p_eq)
-}
-)
+## Assign parameters in grid - choose two variables to scan over (r, L)
+p1 = seq(0.1,5, length.out = n) #parameter 1
+p2 = seq(0.1,1, length.out = n) #parameter 2
+p.dataframe <- bind_rows(p.list) %>%
+  slice(rep(row_number(), n^2)) %>% 
+  select(-L1, -g2) #select which parameters to replace 
+p.grid <- expand.grid(L1 = p1,
+                      g2 = p2) %>% 
+  bind_cols(p.dataframe)
 
-out_eq <- p_eq %>% pivot_longer(cols= R_star:B_star, names_to = "variable", values_to = "value")
+## Analytical solutions 
+states.summary <- p.grid %>% 
+  mutate(R.star.1 = L1/(f1*g1 - g1*h1*L1),
+         R.star.2 = L2/(f2*g2 - g2*h2*L2),
+         B1.star = r*f1/L1,
+         B2.star = r*f2/L2) %>% 
+  mutate(B.star = if_else(R.star.1 < R.star.2, B1.star, B2.star)) %>% 
+  mutate(sp = if_else(R.star.1 < R.star.2, 1, 2)) %>%
+  mutate(sp = as.factor(sp)) 
 
-  ggplot(out_eq) + 
-    geom_line(aes(x=L, y=value, linetype = variable, color = factor(r))) + 
-    scale_x_continuous(limits = c(0,10)) + 
-    scale_y_continuous(limits = c(-5, 25)) + 
-    scale_color_viridis_d(direction = -1) + 
-    theme_minimal()
+head(states.summary)
+# Viz Heatmap of bimoass for r vs L 
+ggplot(states.summary, aes(x=L1, y=g2)) + 
+  geom_raster(aes(fill = sp, alpha = B.star)) 
+#theme_minimal()
 ```
+
+
+# Two consumers, one fluctuating resource 
+
+## Model Description
+A simple model for two species ($B_1$ and $B_2$) competing for one resource ($R$) with a supply rate that varies in time. Consumers interact solely by competing for a shared resource. 
+
+$$
+\begin{aligned}
+  \frac{dB_{1}}{dt} &= f_{1} \frac{g_{1}R}{1+ g_{1}h_{1}R}B_{1} - L_{1} B_{1} \\
+  \frac{dB_{2}}{dt} &= f_{2} \frac{g_{2}R}{1+ g_{2}h_{2}R}B_{2} - L_{2} B_{2} \\
+  \frac{dR}{dt} &= r(t) - \frac{g_{1}R}{1+ g_{1}h_{1}R}B_{1} - \frac{g_{2}R}{1+ g_{2}h_{2}R}B_{2}\\
+  r(t) &= \sin(\beta t)
+\end{aligned}
+$$
+## Possible extensions
+
+- Time varying $r$. 
+- Decomposition of biomass supplies $r$ 
+- Different shapes to growth curves (exponential)
+
+# SCRAP CODE
+```{r, include = F, eval=FALSE}
+
+## create resource isocline
+R.iso <- expression(L/(f*g-h*g*L)) # set R = 0 and solved algebraically
+R.star <- eval(R.iso)
+B.iso <- expression(r/(g*L/(f*g-h*g*L)))
+B.star <- eval(B.iso)
+
+```
+
