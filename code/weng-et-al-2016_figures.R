@@ -216,3 +216,5 @@ Be_0 = 1;
 Nm = Ntot/
 y0 = c(Bd_0, Be_0, Nm_0) 
 
+list2env(p_list, envir = environment())
+

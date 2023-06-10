@@ -35,7 +35,6 @@ two_sp_one_resource <- function(t, y, p) { # one sp/one resource consumer resour
   B1 = y[2]
   B2 = y[3]
   
-  
   ## outputs: B (biomass), R (resource level) 
   with(as.list(p),{
     dR.dt = r - g1*R*B1/(1 + h1*g1*R) - g2*R*B2/(1 + h2*g2*R)

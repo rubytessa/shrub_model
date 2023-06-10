@@ -1,0 +1,175 @@
+---
+title: "Tundra Trait Exploration"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+```{r}
+library(tidyverse)
+library(plotly)
+```
+
+# Tundra Trait Team
+
+Version 2 of the database, accessed in 2022. 
+
+```{r}
+## Read Tundra Trait Team data
+ttt.traits <- read_csv("data_tundra_traits/raw_data/TTT_cleaned_dataset_v1.csv")
+
+# ## Write Tundra Trait Team data 
+# write_rds(ttt.traits, "data/try.ttt.rds")
+
+# columns
+names(ttt.traits) 
+# traits
+ttt.traits$Trait %>% unique()
+```
+
+# TTT- LMA & Leaf N
+```{r}
+
+ttt <- read_csv("data_tundra_traits/raw_data/TTT_cleaned_dataset_v1.csv")
+
+
+## Example species for DDRIG Table
+traits <- c("Leaf area per leaf dry mass (specific leaf area, SLA)", "Leaf nitrogen (N) content per leaf dry mass")
+species <- ttt$AccSpeciesName %>% unique() %>% sort()
+shrub_sp <- species[str_detect(species, "Salix|Betula|Alnus")]
+shrub_species <- c("Betula nana", "Alnus viridis", "Salix glauca", "Ledum palustre", "Cassiope tetragona", "Vaccinium vitis-idaea", "Vaccinium uliginosum", "Eriophorum vaginatum", "Carex bigelowii")
+
+ttt2 <- ttt %>% filter(Trait %in% traits) %>% 
+  select(IndividualID, AccSpeciesName, Trait, Value, Units) %>% 
+  pivot_wider(names_from = Trait, values_from = Value, values_fill = NA) %>% 
+  rename(SLA = "Leaf area per leaf dry mass (specific leaf area, SLA)", leafN = "Leaf nitrogen (N) content per leaf dry mass") %>% 
+  mutate(LMA = 1/SLA) %>% 
+  #replace_na(list(SLA = 80, leafN = 60)) %>% 
+  mutate(label = if_else(AccSpeciesName %in% shrub_species, AccSpeciesName, "other")) %>% 
+  mutate(genus = str_extract(label,"(\\w+)")) %>% 
+  arrange(desc(label)) %>% 
+  filter(label != "other")
+
+##viz
+# density plot
+ggplot(ttt2, aes(x=SLA,fill=label)) + geom_density(aes(alpha=0.5)) +
+  xlim(c(0,40))
+
+ggplot(ttt2) + geom_boxplot(aes(x = SLA, fill = label))
+# scatter plot 
+ggplot(ttt2, aes(x=SLA, y = leafN, color = genus)) + 
+         geom_jitter() + 
+  stat_ellipse()
+
+ggplot(ttt2) + geom_histogram(aes(x=LMA, fill = label, alpha = 0.5))
+
+## Betula nana, rho tom, vac vit
+
+betnan <- ttt %>% filter(AccSpeciesName == "Betula nana")
+rhotom <- ttt %>% filter(AccSpeciesName == "Ledum palustre")
+vacvit <- ttt %>% filter(AccSpeciesName == "Vaccinium vitis-idaea")
+salix <- ttt %>% filter(str_detect(AccSpeciesName, "Salix"))
+
+betnan %>% filter(Trait %in% traits) %>% 
+  group_by(AccSpeciesName, Trait, Units) %>% 
+  summarize(mean = mean(Value))
+
+rhotom %>% filter(Trait %in% traits) %>% 
+  group_by(AccSpeciesName, Trait, Units) %>% 
+  summarize(mean = mean(Value))
+
+# unit conversions
+plants <- bind_rows(betnan, rhotom, vacvit) %>% 
+  filter(Trait %in% traits) %>% 
+  group_by(AccSpeciesName, Trait, Units) %>% 
+  summarize(mean = mean(Value)) %>% 
+  ungroup() %>% 
+  select(-Trait) %>% 
+  pivot_wider(names_from = Units, values_from = mean) %>% 
+  mutate(LMA = 1/`mm2/mg`*100) %>% #mg/cm2
+  mutate(leafN = `mg/g`*LMA/1000) #mgN/cm2
+```
+
+
+# ITEX: leaf fluxes 
+
+From Jesperson et al. 
+```{r}
+
+## photosynthesis
+
+flux <- read_csv("data/LeafLevel_Ps_Gs_ToolikMAT_2016_NSF.csv")
+
+flux %>% filter(Spp %in% c("betula", "ledum")) %>% 
+  filter(Snowlevel == "AMBSNOW") %>% 
+  #filter(Spp == "betula") %>%
+  group_by(Spp) %>% 
+  summarize(mean_Ps = mean(PsCorrected), sd = sd(PsCorrected))
+
+## respiration
+
+resp <- read_csv("data/leaf_respiration.csv")
+  
+resp %>% 
+  group_by(Species) %>% 
+  summarize(mean_Rd = mean(Respiration..mg.CO2.g.1.hr.1.), sd = sd(Respiration..mg.CO2.g.1.hr.1.))
+
+```
+
+## ITEX-Betway: SLA and Height 
+
+From 2 papers from Atqasuk, Toolik, and Utqiagvik 
+```{r}
+
+itex_traits <- read_csv("data_tundra_traits/raw_data/itex-aon_Betway_PlantTraits_2018.csv",skip =1) %>% 
+  mutate(SLA = 0.1*SLA) %>% #convert cm2/g to mm2/mg
+  mutate(LMA = 1/SLA)
+
+names(itex_traits)
+
+ggplot(itex_traits, aes(x = SLA, y = PlantHeight_Veg)) + 
+  geom_point(aes(color = Taxon)) + 
+  scale_x_continuous(limits = c(0,500))
+
+ggplot(itex_traits, aes(x=LMA)) + 
+  geom_density(aes(fill=Taxon, alpha = 0.5)) +
+  ggplotly()
+```
+
+# Toolik Species List and Trait Values 
+```{r}
+## Toolik Species List 
+ttt.species <- ttt.traits$AccSpeciesName %>% unique()
+species <- read_csv("mat06_species_list.csv") # from % cover datasets
+toolik.species <- species$Accepted.Latin.Name.or.category
+
+toolik.traits <- ttt.traits %>% filter(AccSpeciesName %in% toolik.species)
+
+## Exploration
+toolik.traits$AccSpeciesName %>% unique()
+
+toolik.traits %>% select(Trait, Units) %>% unique()
+
+mean.traits <- toolik.traits %>% group_by(AccSpeciesName, Trait, Units) %>% 
+  summarize(count = n(), mean = mean(Value), sd = sd(Value))
+
+mean.traits %>% filter(AccSpeciesName == "Betula nana")
+
+## Dataframe for Model
+data <- toolik.traits %>% 
+  
+  # recode to more workable names
+  mutate(trait_names = fct_recode(Trait,
+    "SLA" = "Leaf area per leaf dry mass (specific leaf area, SLA)",
+    "leaf_N_per_dry_mass" = "Leaf nitrogen (N) content per leaf dry mass",
+    "LDMC" = "Leaf dry mass per leaf fresh mass (Leaf dry matter content, LDMC)"
+                                  )) %>% 
+  # arrange columns
+  select(...1, AccSpeciesName, Treatment, Trait, trait_names, Value, Units, everything()) %>% 
+  
+  # get traits
+  filter(trait_names %in% c("SLA", "leaf_N_per_dry_mass", "LDMC"))
+
+## Toolik Traits 
+
+```
+
