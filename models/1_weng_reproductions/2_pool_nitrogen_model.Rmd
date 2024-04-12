@@ -1,0 +1,58 @@
+---
+title: "2_pool_nitrogen_model"
+author: "Ruby An"
+date: "2023-10-30"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+options(scipen = 1, digits = 2) #set to two decimal 
+
+## Packages
+library(tidyverse)
+library(deSolve)
+library(knitr)
+
+## Plot Theme
+theme_set(theme_classic())
+
+## Functions ----
+source("shrub_model_code.R")
+```
+
+## Model
+
+![2 pool nitrogen model.](/Users/ruby/Projects/shrub_model/diagrams/2_pool_nitrogen_model.png)
+
+### Model Description
+
+In this simplified nitrogen model, we track the amount of N in two discrete pools: leaf and "soil". The assumption behind this model is that plant uptake is fast relative to decomposition ($\frac{1}{\tau}$). 
+
+### Model Equations: 
+
+\begin{align} 
+N_{tot} &= N_{S} + N_{L}\\
+\frac{dN_{S}}{dt} &= \frac{N_{tot} - N_{S}}{\lambda} - \frac{N_{S}}{\tau_{S}}
+
+\end{align}
+ 
+## Parameters
+
+```{r cars}
+param_file <- "parameters/weng_units.csv"
+params <- read_csv(param_file)
+p_list <- setNames(as.list(params$value), params$parameter) # list
+p_list$sigma <- 0.02 # MANUALLY SET LMA VALUE
+
+p_linked <- link_traits(p_list$sigma, p_list)
+p_derived <- c(p_list, p_linked) # parameters and derived parameters 
+list2env(p_derived, envir = environment())
+
+## listed parameters
+kable(params, "pipe") # output parameter table in Markdown
+
+## derived parameters
+kable(tibble(parameter = names(p_linked), value = unlist(p_linked), 
+             description = c("leaf mass per area", "leaf lifespan", "leaf N content per area", "leaf respiration per area", "decomposition time"),
+             unit = c("kg C m-2", "yr kgC-1 m2", "gN m-2", "kgC m-2 yr-1", "yr"))) # output parameter table in Markdown
+```

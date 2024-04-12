@@ -213,7 +213,7 @@ t = seq(from=0,to=1000,by=0.1) # time
 
 Bd_0 = 1;
 Be_0 = 1;
-Nm = Ntot/
+Nm = Ntot/p_list$tau
 y0 = c(Bd_0, Be_0, Nm_0) 
 
 list2env(p_list, envir = environment())

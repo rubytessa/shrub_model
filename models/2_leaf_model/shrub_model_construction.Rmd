@@ -1,0 +1,634 @@
+---
+title: "Shrub Model Run"
+author: "Ruby An"
+date: "2023-10-09"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+options(scipen = 1, digits = 2) #set to two decimal 
+
+## Packages
+library(tidyverse)
+library(deSolve)
+library(knitr)
+
+## Plot Theme
+theme_set(theme_classic())
+
+## Functions ----
+source("shrub_model_code.R")
+```
+
+## Model
+
+![Caption for the picture.](/Users/ruby/Projects/shrub_model/diagrams/nitrogen_model_diagram.png)
+
+ 
+## Parameters
+
+```{r cars}
+param_file <- "parameters/weng_units.csv"
+params <- read_csv(param_file)
+p_list <- setNames(as.list(params$value), params$parameter) # list
+p_list$sigma <- 0.02 # MANUALLY SET LMA VALUE
+#p_list$N_tot <- 300 # MANUALLY SET total ecosystem N
+
+p_linked <- link_traits(p_list$sigma, p_list)
+p_derived <- c(p_list, p_linked) # parameters and derived parameters 
+list2env(p_derived, envir = environment())
+
+## listed parameters
+kable(params, "pipe") # output parameter table in Markdown
+
+## derived parameters
+kable(tibble(parameter = names(p_linked), value = unlist(p_linked), 
+             description = c("leaf mass per area", "leaf lifespan", "leaf N content per area", "leaf respiration per area", "decomposition time"),
+             unit = c("kg C m-2", "yr kgC-1 m2", "gN m-2", "kgC m-2 yr-1", "yr"))) # output parameter table in Markdown
+```
+
+## Equilibria
+```{r}
+# N Equilibria
+list2env(p_derived, envir = environment())
+NS.eq = 1/(lambda*u*a_r)
+NL.eq = (N_tot*lambda - 1/(u*a_r))/(tau + lambda)
+N_lit.eq = N_tot - NS.eq - NL.eq
+
+kable(tibble(
+      state = c("NL", "N_lit", "NS"),
+      EQ.value = c(NL.eq, N_tot-NL.eq-NS.eq, NS.eq),
+      description = c("N in leaves", "N in litter", "N in soil"), 
+      units = c("gN m-2", "gN m-2", "gN m-2")))
+```
+
+## Timeseries Simulations
+
+Model is written on a per m2 ground area basis, tracking nitrogen in leaves, litter, and soil. State variables are gN / m2 ground. 
+
+### Initial Conditions
+
+```{r ic, echo=FALSE}
+NL.0 <- N_tot-N_tot*0.5
+NS.0 <- p_derived$N_tot - NL.0
+y.0 = c(NL.0, NS.0)
+y.star = c(NL.eq, NS.eq)
+
+kable(tibble(
+  state = c("N_tot", "NL.0", "NS.0"),
+  value = c(N_tot, NL.0, NS.0),
+  description = c("total ecosystem N", "initial stock of N in leaves", "initial stock of N in soil"),
+  units = c("gN m-2", "gN m-2", "gN m-2")
+))
+```
+
+
+### N-limited Integration
+
+```{r pressure, echo=TRUE}
+t = seq(from=0,to=50,by=1/365) # t in years, integration on a daily timestep (0.00274)
+out = ode(y=y.0,times=t,func=grow_plant_n_limited,parms=p_derived) %>% as_tibble() 
+colnames(out) <- c("time", "NL", "NS")
+
+# derived states and rates
+output <- out %>% 
+  ## calculate litter
+  mutate(N_lit = p_derived$N_tot - NL - NS) %>% 
+  # calculate leaf area
+  mutate(L = NL/n) %>% 
+  ## calculate c flux rates 
+  mutate(photo = (n/sigma)*(V/k)*(1-exp(-k*L)),
+         resp = (n/sigma)*(R + G*sigma/lambda)*L,
+         net_gain = photo-resp) %>% 
+  ## calculate instantaneous N fluxes
+  mutate(n_uptake = u*a_r*NS*NL,
+         n_litterfall = NL/lambda,
+         n_min = N_lit/tau) 
+
+```
+
+#### Visualization
+
+##### States
+```{r}
+## State variables
+output %>% 
+  ## plotting 
+  pivot_longer(NL:net_gain, names_to = "variable", values_to = "value") %>% 
+  filter(variable %in% c("N_lit", "NL", "NS")) %>% 
+  
+  ## VIZ
+  ggplot(aes(x=time, y=value, color=variable)) + 
+  geom_line()  +
+  
+  ## simple equilibria 
+  geom_hline(yintercept = NS.eq, color = "darkblue") + 
+  geom_hline(yintercept = NL.eq, color = "darkgreen") +
+  geom_hline(yintercept = N_lit.eq, color = "brown") +
+  labs(y = "gN in each state (gN)", x = "years",
+       title = paste0("sigma = ", sigma, " kg C m-2  |  N_tot = ", N_tot, " gN m-2S"))
+```
+
+
+##### Fluxes
+```{r, fig.show="hold", out.width="50%"}
+
+## N fluxes per ground area
+output %>% 
+  
+  ## plotting 
+  pivot_longer(NL:n_min, names_to = "variable", values_to = "value") %>% 
+  filter(variable %in% c("n_uptake", "n_litterfall", "n_min")) %>% 
+  
+  ## VIZ
+  ggplot(aes(x=time, y=value, color=variable)) + 
+  geom_line()  +
+  lims(y = c(0,100)) + 
+  
+  labs(y = "gN flux (gN m-2 yr-1)", 
+       x = "year",
+       title = "N fluxes per m2 ground")
+
+## N fluxes per leaf area
+output %>% 
+  
+  mutate(n_uptake_area = n_uptake/L,
+         n_litterfall_area = n_litterfall/L,
+         n_min_area = n_min/L) %>% 
+  
+  ## plotting 
+  pivot_longer(NL:n_min_area, names_to = "variable", values_to = "value") %>% 
+  filter(variable %in% c("n_uptake_area", "n_litterfall_area", "n_min_area")) %>% 
+  
+  ## VIZ
+  ggplot(aes(x=time, y=value, color=variable)) + 
+  geom_line()  +
+  #lims(y = c(0,100)) + 
+  
+  labs(y = "gN flux (gN m-2 leaf yr-1)", 
+       x = "year",
+       title = "N flux per m2 Leaf Area")
+ 
+```
+
+### C-Limited growth
+
+```{r, echo=TRUE}
+## inital conditions
+NL.0 <- N_tot-N_tot*0.99
+NS.0 <- p_derived$N_tot - NL.0
+y.0 = c(NL.0, NS.0)
+y.star = c(NL.eq, NS.eq)
+
+kable(tibble(
+  state = c("N_tot", "NL.0", "NS.0"),
+  value = c(N_tot, NL.0, NS.0),
+  description = c("total ecosystem N", "initial stock of N in leaves", "initial stock of N in soil"),
+  units = c("gN m-2", "gN m-2", "gN m-2")
+))
+
+## integration
+t = seq(from=0,to=50,by=1/365) # t in years, integration on a daily timestep (0.00274)
+out = ode(y=y.0,times=t,func=grow_plant_c_limited,parms=p_derived) %>% as_tibble() 
+colnames(out) <- c("time", "NL", "NS")
+
+## derived states and rates
+output <- out %>% 
+  ## calculate litter
+  mutate(N_lit = p_derived$N_tot - NL - NS) %>% 
+  # calculate leaf area
+  mutate(L = NL/n) %>% 
+  ## calculate c flux rates 
+  mutate(photo = (V/k)*(1-exp(-k*L)),
+         resp = (R + G*sigma/lambda)*L,
+         net_gain = photo-resp) %>% 
+  ## calculate N-limitation
+  mutate(c_lim_uptake = (n/sigma)*net_gain) %>% 
+  ## calculate instantaneous N fluxes
+  mutate(n_lim_uptake = u*a_r*NS*NL,
+         n_litterfall = NL/lambda,
+         n_min = N_lit/tau) 
+
+
+```
+
+#### Visualization
+
+##### States
+```{r, fig.show="hold", out.width="50%"}
+## PLOT N STATES
+output %>% 
+  
+  ## plotting 
+  pivot_longer(NL:net_gain, names_to = "variable", values_to = "value") %>% 
+  filter(variable %in% c("N_lit", "NL", "NS")) %>% 
+  
+  ## VIZ
+  ggplot(aes(x=time, y=value, color=variable)) + 
+  geom_line()  +
+  
+  ## labels
+  labs(y = "gN in each state (gN)", x = "years",
+       title = paste0("sigma = ", sigma, " kg C m-2  |  N_tot = ", N_tot, " gN m-2"))
+
+## PLOT LAI
+output %>% 
+  
+  ## plotting 
+  pivot_longer(NL:net_gain, names_to = "variable", values_to = "value") %>% 
+  filter(variable %in% c("L")) %>% # select leaf area
+  
+  ## VIZ
+  ggplot(aes(x=time, y=value, color=variable)) + 
+  geom_line()  +
+  labs(y = "Leaf Area (m2 leaf / m2 ground", x = "years",
+       title = paste0("sigma = ", sigma, " kg C m-2  |  N_tot = ", N_tot, " gN m-2"))
+
+tail(output)
+```
+Note this seems unreasonable because there is no check on NOT depleting nitogen below the amount in the soil with C-limitation only!
+
+##### Fluxes
+```{r, figures-side, fig.show="hold", out.width="50%"}
+
+## PLOT N Fluxes
+output %>% 
+  
+  ## plotting 
+  pivot_longer(NL:n_lim_uptake, names_to = "variable", values_to = "value") %>% 
+  filter(variable %in% c("c_lim_uptake", "n_lim_uptake")) %>% 
+  
+  ## VIZ
+  ggplot(aes(x=time, y=value, color=variable)) + 
+  geom_line()  +
+
+  ## labels
+  labs(y = "gN flux (gN m-2 yr-1)", x = "years",
+       title = paste0("sigma = ", sigma, " kg C m-2  |  N_tot = ", N_tot, " gN m-2"))
+  
+
+## Plot C Fluxes
+output %>% 
+  
+  ## plotting 
+  pivot_longer(NL:net_gain, names_to = "variable", values_to = "value") %>% 
+  filter(variable %in% c("photo", "resp", "net_gain")) %>% 
+  
+  ## VIZ
+  ggplot(aes(x=time, y=value, color=variable)) + 
+  geom_line()  +
+  
+  ## simple equilibria 
+  labs(y = "kgC flux (kgC m-2 yr-1)", x = "years",
+       title = paste0("sigma = ", sigma, " kg C m-2  |  N_tot = ", N_tot, " gN m-2"))
+```
+This is reflected in the negative N-uptake rate under nitrogen limitation (not operating in this system). 
+
+### Co-limited growth: 
+```{r, echo=TRUE}
+p_derived$N_tot <- 100 # MANUALLY SET total ecosystem N
+N_tot <- p_derived$N_tot
+
+## inital conditions
+NL.0 <- p_derived$N_tot-p_derived$N_tot*0.90
+NS.0 <- p_derived$N_tot - NL.0
+y.0 = c(NL.0, NS.0)
+y.star = c(NL.eq, NS.eq)
+
+kable(tibble(
+  state = c("N_tot", "NL.0", "NS.0"),
+  value = c(N_tot, NL.0, NS.0),
+  description = c("total ecosystem N", "initial stock of N in leaves", "initial stock of N in soil"),
+  units = c("gN m-2", "gN m-2", "gN m-2")
+))
+
+## integration
+t = seq(from=0,to=50,by=1/365) # t in years, integration on a daily timestep (0.00274)
+out = ode(y=y.0,times=t,func=grow_plant_co_limited,parms=p_derived) %>% as_tibble() 
+colnames(out) <- c("time", "NL", "NS")
+
+## derived states and rates
+output <- out %>% 
+  ## calculate litter
+  mutate(N_lit = p_derived$N_tot - NL - NS) %>% 
+  # calculate leaf area
+  mutate(L = NL/n) %>% 
+  ## calculate c flux rates 
+  mutate(photo = (V/k)*(1-exp(-k*L)),
+         resp = (R + G*sigma/lambda)*L,
+         net_gain = photo-resp) %>% 
+  ## calculate N-limitation
+  mutate(c_lim_uptake = (n/sigma)*net_gain) %>% 
+  ## calculate instantaneous N fluxes
+  mutate(n_lim_uptake = u*a_r*NS*NL,
+         n_litterfall = NL/lambda,
+         n_min = N_lit/tau) 
+
+
+```
+
+#### N-Equilibria
+```{r}
+# N Equilibria
+list2env(p_derived, envir = environment())
+NS.eq = 1/(lambda*u*a_r)
+NL.eq = (N_tot*lambda - 1/(u*a_r))/(tau + lambda)
+N_lit.eq = N_tot - NS.eq - NL.eq
+
+kable(tibble(
+      state = c("NL", "N_lit", "NS"),
+      EQ.value = c(NL.eq, N_tot-NL.eq-NS.eq, NS.eq),
+      description = c("N in leaves", "N in litter", "N in soil"), 
+      units = c("gN m-2", "gN m-2", "gN m-2")))
+```
+
+#### Visualization
+
+##### States
+```{r, fig.show="hold", out.width="100%"}
+## PLOT N STATES
+output %>% 
+  
+  ## plotting 
+  pivot_longer(NL:net_gain, names_to = "variable", values_to = "value") %>% 
+  filter(variable %in% c("N_lit", "NL", "NS")) %>% 
+  
+  ## VIZ
+  ggplot(aes(x=time, y=value, color=variable)) + 
+  geom_line()  +
+  
+  ## simple equilibria 
+  geom_hline(yintercept = NS.eq, color = "darkblue") + 
+  geom_hline(yintercept = NL.eq, color = "darkgreen") +
+  geom_hline(yintercept = N_lit.eq, color = "brown") +
+  
+  ## labels
+  labs(y = "gN in each state (gN)", x = "years",
+       title = paste0("sigma = ", sigma, " kg C m-2  |  N_tot = ", N_tot, " gN m-2"))
+
+## PLOT LAI
+output %>% 
+  
+  ## plotting 
+  pivot_longer(NL:net_gain, names_to = "variable", values_to = "value") %>% 
+  filter(variable %in% c("L")) %>% # select leaf area
+  
+  ## VIZ
+  ggplot(aes(x=time, y=value, color=variable)) + 
+  geom_line()  +
+  labs(y = "Leaf Area (m2 leaf / m2 ground", x = "years",
+       title = paste0("sigma = ", sigma, " kg C m-2  |  N_tot = ", N_tot, " gN m-2"))
+
+tail(output)
+```
+
+
+##### Fluxes
+```{r, fig.show="hold", out.width="100%"}
+
+## PLOT N Fluxes
+output %>% 
+  
+  ## plotting 
+  pivot_longer(NL:n_lim_uptake, names_to = "variable", values_to = "value") %>% 
+  filter(variable %in% c("c_lim_uptake", "n_lim_uptake")) %>% 
+  
+  ## VIZ
+  ggplot(aes(x=time, y=value, color=variable)) + 
+  geom_line()  +
+
+  ## labels
+  #lims(y = c(0,100)) + 
+  labs(y = "gN flux (gN m-2 yr-1)", x = "years",
+       title = paste0("sigma = ", sigma, " kg C m-2  |  N_tot = ", N_tot, " gN m-2"))
+  
+
+## Plot C Fluxes
+output %>% 
+  
+  ## plotting 
+  pivot_longer(NL:net_gain, names_to = "variable", values_to = "value") %>% 
+  filter(variable %in% c("photo", "resp", "net_gain")) %>% 
+  
+  ## VIZ
+  ggplot(aes(x=time, y=value, color=variable)) + 
+  geom_line()  +
+  
+  ## simple equilibria 
+  labs(y = "kgC flux (kgC m-2 yr-1)", x = "years",
+       title = paste0("sigma = ", sigma, " kg C m-2  |  N_tot = ", N_tot, " gN m-2"))
+
+## C Fluxes per unit Leaf Area
+
+output %>% 
+  mutate(photo_per_area = photo/L, resp_per_area = resp/L, net_gain_per_area = net_gain/L) %>% 
+  
+  ## plotting 
+  pivot_longer(NL:net_gain_per_area, names_to = "variable", values_to = "value") %>% 
+  filter(variable %in% c("photo_per_area", "resp_per_area", "net_gain_per_area")) %>% 
+  
+  ## VIZ
+  ggplot(aes(x=time, y=value, color=variable)) + 
+  geom_line()  +
+
+  ## labels
+  #lims(y = c(0,100)) + 
+  labs(y = "kgC flux (kgC m-2 leaf yr-1)", x = "years",
+       title = paste0("sigma = ", sigma, " kg C m-2  |  N_tot = ", N_tot, " gN m-2"))
+  
+```
+
+
+
+
+
+### Co-limited growth :
+```{r, echo=TRUE}
+p_derived$N_tot <- 800 # MANUALLY SET total ecosystem N
+N_tot <- p_derived$N_tot
+
+## inital conditions
+NL.0 <- p_derived$N_tot*0.1
+NS.0 <- p_derived$N_tot - NL.0 
+y.0 = c(NL.0, NS.0)
+y.star = c(NL.eq, NS.eq)
+
+kable(tibble(
+  state = c("N_tot", "NL.0", "NS.0"),
+  value = c(N_tot, NL.0, NS.0),
+  description = c("total ecosystem N", "initial stock of N in leaves", "initial stock of N in soil"),
+  units = c("gN m-2", "gN m-2", "gN m-2")
+))
+
+## integration
+t = seq(from=0,to=50,by=1/365) # t in years, integration on a daily timestep (0.00274)
+out = ode(y=y.0,times=t,func=grow_plant_co_limited,parms=p_derived) %>% as_tibble() 
+colnames(out) <- c("time", "NL", "NS")
+
+## derived states and rates
+output <- out %>% 
+  ## calculate litter
+  mutate(N_lit = p_derived$N_tot - NL - NS) %>% 
+  # calculate leaf area
+  mutate(L = NL/n) %>% 
+  ## calculate c flux rates 
+  mutate(photo = (V/k)*(1-exp(-k*L)),
+         resp = (R + G*sigma/lambda)*L,
+         net_gain = photo-resp) %>% 
+  ## calculate N-limitation
+  mutate(c_lim_uptake = (n/sigma)*net_gain) %>% 
+  ## calculate instantaneous N fluxes
+  mutate(n_lim_uptake = u*a_r*NS*NL,
+         n_litterfall = NL/lambda,
+         n_min = N_lit/tau) 
+
+
+```
+
+
+#### N-Equilibria
+```{r}
+# N Equilibria
+list2env(p_derived, envir = environment())
+NS.eq = 1/(lambda*u*a_r)
+NL.eq = (N_tot*lambda - 1/(u*a_r))/(tau + lambda)
+N_lit.eq = N_tot - NS.eq - NL.eq
+
+kable(tibble(
+      state = c("NL", "N_lit", "NS"),
+      EQ.value = c(NL.eq, N_tot-NL.eq-NS.eq, NS.eq),
+      description = c("N in leaves", "N in litter", "N in soil"), 
+      units = c("gN m-2", "gN m-2", "gN m-2")))
+```
+
+#### Visualization
+
+##### States
+```{r, fig.show="hold", out.width="100%"}
+## PLOT N STATES
+output %>% 
+  
+  ## plotting 
+  pivot_longer(NL:net_gain, names_to = "variable", values_to = "value") %>% 
+  filter(variable %in% c("N_lit", "NL", "NS")) %>% 
+  
+  ## VIZ
+  ggplot(aes(x=time, y=value, color=variable)) + 
+  geom_line()  +
+  
+  ## simple equilibria 
+  geom_hline(yintercept = NS.eq, color = "darkblue") + 
+  geom_hline(yintercept = NL.eq, color = "darkgreen") +
+  geom_hline(yintercept = N_lit.eq, color = "brown") +
+  
+  ## labels
+  labs(y = "gN in each state (gN)", x = "years",
+       title = paste0("sigma = ", sigma, " kg C m-2  |  N_tot = ", N_tot, " gN m-2"))
+
+## PLOT LAI
+output %>% 
+  
+  ## plotting 
+  pivot_longer(NL:net_gain, names_to = "variable", values_to = "value") %>% 
+  filter(variable %in% c("L")) %>% # select leaf area
+  
+  ## VIZ
+  ggplot(aes(x=time, y=value, color=variable)) + 
+  geom_line()  +
+  labs(y = "Leaf Area (m2 leaf / m2 ground", x = "years",
+       title = paste0("sigma = ", sigma, " kg C m-2  |  N_tot = ", N_tot, " gN m-2"))
+
+tail(output)
+```
+
+
+##### Fluxes
+```{r, fig.show="hold", out.width="100%"}
+
+## PLOT N Fluxes
+output %>% 
+  
+  ## plotting 
+  pivot_longer(NL:n_lim_uptake, names_to = "variable", values_to = "value") %>% 
+  filter(variable %in% c("c_lim_uptake", "n_lim_uptake")) %>% 
+  
+  ## VIZ
+  ggplot(aes(x=time, y=value, color=variable)) + 
+  geom_line()  +
+
+  ## labels
+  #lims(y = c(0,100)) + 
+  labs(y = "gN flux (gN m-2 yr-1)", x = "years",
+       title = paste0("sigma = ", sigma, " kg C m-2  |  N_tot = ", N_tot, " gN m-2"))
+  
+
+## Plot C Fluxes
+output %>% 
+  
+  ## plotting 
+  pivot_longer(NL:net_gain, names_to = "variable", values_to = "value") %>% 
+  filter(variable %in% c("photo", "resp", "net_gain")) %>% 
+  
+  ## VIZ
+  ggplot(aes(x=time, y=value, color=variable)) + 
+  geom_line()  +
+  
+  ## simple equilibria 
+  labs(y = "kgC flux (kgC m-2 yr-1)", x = "years",
+       title = paste0("sigma = ", sigma, " kg C m-2  |  N_tot = ", N_tot, " gN m-2"))
+
+## C Fluxes per unit Leaf Area
+
+output %>% 
+  mutate(photo_per_area = photo/L, resp_per_area = resp/L, net_gain_per_area = net_gain/L) %>% 
+  
+  ## plotting 
+  pivot_longer(NL:net_gain_per_area, names_to = "variable", values_to = "value") %>% 
+  filter(variable %in% c("photo_per_area", "resp_per_area", "net_gain_per_area")) %>% 
+  
+  ## VIZ
+  ggplot(aes(x=time, y=value, color=variable)) + 
+  geom_line()  +
+
+  ## labels
+  #lims(y = c(0,100)) + 
+  labs(y = "kgC flux (kgC m-2 leaf yr-1)", x = "years",
+       title = paste0("sigma = ", sigma, " kg C m-2  |  N_tot = ", N_tot, " gN m-2"))
+  
+```
+
+
+
+
+## Diagnostics
+
+### Leaf level flux rates as a function of LAI
+```{r}
+
+L <- seq(0,30, 0.1)
+
+## derived states and rates
+leaf_flux <- tibble(L) %>% 
+  ## calculate c flux rates 
+  mutate(photo = (V/k)*(1-exp(-k*L)),
+         resp = (R + G*sigma/lambda)*L,
+         net_gain = photo-resp)
+
+leaf_flux
+
+leaf_flux %>% 
+  pivot_longer(cols = photo:net_gain, names_to = "variable", values_to = "value") %>% 
+  ggplot(aes(x=L, y = value, color = variable)) +
+  geom_line() + 
+  geom_hline(yintercept = V/k, aes(color = "black")) +
+  labs(x = "Leaf Area per m2 ground (m2)", y = "Carbon Flux (kgC m-2 yr-1)")
+
+
+```
+
+
+## Two Species Model
+

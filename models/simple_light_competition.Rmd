@@ -1,0 +1,171 @@
+---
+title: "simple_light_competition"
+author: "Ruby An"
+date: "2024-03-22"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+options(scipen = 1, digits = 2) #set to two decimal 
+
+## Packages
+library(tidyverse)
+library(deSolve)
+library(knitr)
+library(ggpubr)
+
+## Plot Theme
+theme_set(theme_classic())
+```
+
+## Model Description 
+
+This is a simplified version of the tundra light competition model. 
+
+## Functions
+
+You can also embed plots, for example:
+
+```{r functions}
+
+eq_light_extinction <- function(u,p) {
+  
+  with(as.list(p), {
+     # set vectors
+  S = length(u) # f, m, and k should be the same dimension, number of species
+  y = rep(NA, S)
+  L = rep(NA, S)
+  
+  # First species 
+  L_above = 1 # light level at top of canopy
+  
+  # Search interval, with total light
+  lower_bound <- (1/k[1])*log(L_above/u[1]) # first derivative of f_x
+  upper_bound <- L_above/(k[1]*u[1]) 
+  
+  # numerical root find implicit solution for eq 
+  num_solve <- uniroot(function(x) L_above*(1-exp(-k[1]*x)) - k[1]*u[1]*x, 
+                       lower = lower_bound,
+                       upper = upper_bound)
+  
+  # First Species EQ density
+  y[1] <- max(0,num_solve$root)
+  
+  # Light environment for shorter species
+  L[1] <- exp(-k[1]*y[1])
+  
+  # Species 2:S
+  
+  if(S > 1) {
+    for (i in 2:S) {
+      
+        # define search interval
+        lower_bound <- (1/k[i])*log(L[i-1]/u[i]) # first derivative of f_x
+        upper_bound <- L[i-1]/(k[i]*u[i])
+        
+        # numerical root find
+        num_solve <- uniroot(function(x) L[i-1]*(1-exp(-k[i]*x)) - k[i]*u[i]*x, 
+                             lower = lower_bound,
+                             upper = upper_bound)
+        y[i] <- max(0, num_solve$root)
+        
+        # set light below canopy i
+        L[i] <- L[i-1]*exp(-k[i]*y[i])
+      }
+  }  else { # do nothing, only one specie
+      }
+  
+  env_eq <- tibble(L_below = L, u = u, y = y) %>% 
+    mutate(dL = -(L - lag(L,default = 1)))
+  
+  return(env_eq)
+  })
+}
+
+simulate_light_extinction <- function(t,y,p) {
+  
+  # number of species
+  S <- length(y) 
+  
+  # p is a list of parameters: 
+  # f
+  # m
+  # k
+  
+  dy.dt <- rep(NA, S)
+  
+  #first species 
+  dy.dt[1] = f[1]*(1-exp(-k[1]*y[1]))-m[1]*y[1] 
+  
+  if (S > 1) {
+    for (i in 2:S) {
+      dy.dt[i] = f[i]*exp(-k[i]*sum(y[1:(i-1)]))*(1-exp(-k[i]*y[i])) - m[i]*y[i]
+    }
+    return(list(c(dy.dt)))
+  } else { # only one species
+    return(list(c(dy.dt)))
+  }
+}
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+## Equilibrium Solutions - Analytical
+
+## Simulations 
+
+### Parameters
+```{r}
+# Choose number of species + initial conditions
+S <- 1
+y0 <- rep(0.01, S)
+
+# Set parameters
+f <- sort(runif(S)*10)
+m <- rep(1,S)
+k <- rep(1,S)
+p <- setNames(list(f,m,k), c("f","m","k"))
+```
+
+### Analytical Solutions
+```{r}
+# Analytical solutions
+u <- with(as.list(p), { 
+  u <- m/(f*k)
+  return(u)
+})
+
+(eq_density <- eq_light_extinction(u,p))
+
+tibble(species = paste0("y",1:S), u = u)
+
+```
+
+### Integration
+```{r}
+# Set timespan
+t = seq(from=0,to=100,by=0.01)
+
+# Integrate
+out = ode(y=y0,times=t,func=simulate_light_extinction,parms=p);
+
+# Arrange Data
+data <- as_tibble(as.data.frame(out))
+colnames(data) <- c("time", paste0("y",1:S))
+viz_data <- data %>% pivot_longer(cols = contains("y"), names_to = "variable", values_to = "value")
+
+# Plot 
+ggplot(viz_data, aes(x = time, y = value)) + 
+  geom_line(aes(color =variable)) + 
+  geom_hline(yintercept = eq_density$y, color = eq_density$u, linetype = 2) + 
+  theme_bw() 
+```
+
+
+## Eigenvalues 
+
+
+

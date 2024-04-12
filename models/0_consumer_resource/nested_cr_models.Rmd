@@ -30,7 +30,7 @@ color_palette <- c("darkblue", "#658c61")
 color_states <- c("#436340","#658c61","#86c97f")
 
 # source in models 
-source('code/Models.R') # source in C-R models
+source('0_consumer_resource/nested_cr_model_code.R') # source in C-R models
 ```
 
 # Introduction
@@ -470,17 +470,17 @@ There are a number of possible outcomes at equilibrium.
 ```{r}
 # Set-up storage matrices 
 outlist <- list()
-n = 100 # number of steps to break down the variables
+n = 1000 # number of steps to break down the variables
 out_end <- tibble(B_end = rep(NA, n), R_end = rep(NA,n)) # data frame of outputs
 
 ## Assign parameters in grid - choose two variables to scan over (r, L)
-p1 = seq(0.1,5, length.out = n) #parameter 1
-p2 = seq(0.1,1, length.out = n) #parameter 2
+p1 = seq(0.1,2, length.out = n) #parameter 1
+p2 = seq(0.1,2, length.out = n) #parameter 2
 p.dataframe <- bind_rows(p.list) %>%
   slice(rep(row_number(), n^2)) %>% 
-  select(-L1, -g2) #select which parameters to replace 
+  select(-L1, -L2) #select which parameters to replace 
 p.grid <- expand.grid(L1 = p1,
-                      g2 = p2) %>% 
+                      L2 = p2) %>% 
   bind_cols(p.dataframe)
 
 ## Analytical solutions 
@@ -495,7 +495,7 @@ states.summary <- p.grid %>%
 
 head(states.summary)
 # Viz Heatmap of bimoass for r vs L 
-ggplot(states.summary, aes(x=L1, y=g2)) + 
+ggplot(states.summary, aes(x=L1, y=L2)) + 
   geom_raster(aes(fill = sp, alpha = B.star)) 
 #theme_minimal()
 ```
