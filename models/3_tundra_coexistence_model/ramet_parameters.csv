@@ -1,9 +1,0 @@
-parameter, value, description, unit
-a,2,rate of photosynthesis,
-r_l,0.3,rate of respiration,
-c_l,0.3,cost of construction,
-b,0.5,biomass density,
-k,0.2,light decay coefficient,
-v,10,leaf area per ramet,
-beta,5,height to mass power,
-m,2,ramet mortality,

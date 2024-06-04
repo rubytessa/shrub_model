@@ -1,0 +1,14 @@
+species,parameter, value, description, unit
+all,a,10,rate of leaf photosynthesis,
+all,r,4,rate of leaf respiration,
+all,c,20,crown area,cm2
+all,b,0.5,biomass density,
+all,k,0.5,light decay coefficient,
+all,beta,5,height to mass power,
+all,m,1,ramet mortality,
+env,L_above,100,light available above,Total PAR
+vacvit,h,1,height,cm
+erivag,h,2,height,cm
+rhotom,h,4,height,cm
+betnan,h,6,height,cm
+alnus,h,10,height,cm
