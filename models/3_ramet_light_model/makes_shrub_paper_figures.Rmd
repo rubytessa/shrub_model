@@ -1,0 +1,828 @@
+---
+title: "Makes shrub paper figures"
+author: "Ruby An"
+date: "2024-07-13"
+output:
+  pdf_document: default
+  html_document:
+    number_sections: true
+editor_options:
+  chunk_output_type: console
+---
+
+# Set-up
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+options(scipen = 1, digits = 2) #set to two decimal 
+
+## Packages
+library(tidyverse)
+library(deSolve)
+library(knitr)
+library(ggpubr)
+library(cowplot)
+
+## Plot Theme
+theme_set(theme_classic())
+```
+
+# Functions
+```{r}
+# Model functions ------
+
+make_parameters <- function(heights, # heights of S species
+                            # set species generic parameters
+                            a = 10,
+                            r = 2, 
+                            b = 0.6,
+                            beta = 5,
+                            m = 0.1, 
+                            k = 2) {
+  # b : biomass density
+  # beta : power law allometry
+  # m : mortality
+  # a : photosynthetic rate
+  # r : respiration rate
+  # k : light capture per ramet
+  # c : crown area per ramet
+  # L_above : light at top of canopy
+  
+  # of species S
+  S <- length(heights)
+  
+  # demographic parameters
+  p_phys <- setNames(list(a, r, b, beta, m, k), 
+                   c("a","r","b","beta", "m","k"))
+  
+  # calculate minimum light requirement
+  biomass <- b*heights^beta
+  fi <- a/biomass
+  mi <- r/biomass + m
+  ki <- rep(k,S)
+  ui = mi/(fi*k)
+
+  # Set parameter list for numerical solution to Equilibrium
+  p <- setNames(list(fi,mi,ki,1), c("u", "f","m","k","L_above"))
+  
+  return(setNames(list(ui,p), c("ui", "p")))
+}
+
+simulate_ramets <- function(t,y,p) {
+  
+  # number of species
+  S <- length(y) 
+  
+  # p is a list of species-specific parameters: 
+  # f : fecundity
+  # m : mortality
+  # k : light capture per ramet
+  # L_above : light at top of canopy
+  
+  dy.dt <- rep(NA, S)
+  with(as.list(p), {
+    #first species 
+    dy.dt[1] = L_above*f[1]*(1-exp(-k[1]*y[1]))-m[1]*y[1] 
+    
+    if (S > 1) {
+      for (i in 2:S) {
+        dy.dt[i] = L_above*f[i]*exp(-k[i]*sum(y[1:(i-1)]))*(1-exp(-k[i]*y[i])) - m[i]*y[i]
+      }
+      return(list(c(dy.dt)))
+    } else { # only one species
+      return(list(c(dy.dt)))
+    }
+  })
+}
+
+simulate_ramets_physio <- function(t,y,p) {
+  
+  # number of species
+  S <- length(y) 
+  
+  # p is a list of species-specific parameters: 
+  # h : height of ramet
+  # b : biomass density
+  # beta : power law allometry
+  # m : mortality
+  # a : photosynthetic rate
+  # r : respiration rate
+  # k : light capture per ramet
+  # c : crown area per ramet
+  # L_above : light at top of canopy
+  
+  dy.dt <- rep(NA, S)
+  with(as.list(p), {
+    #first species 
+    dy.dt[1] = (1/(b*h[1]^beta))*((a*L_above)*(1-exp(-k[1]*c[1]*y[1]))/y[1] - r)*y[1] - m[1]*y[1] 
+    
+    if (S > 1) {
+      for (i in 2:S) {
+        dy.dt[i] = (1/(b*h[i]^beta))*((a*L_above*e^(-k[i]*c[i]*sum(y[1:(i-1)])))*(1-exp(-k[i]*c[i]*y[i]))/y[i] - r)*y[i] - m[1]*y[1] 
+      }
+      return(list(c(dy.dt)))
+    } else { # only one species
+      return(list(c(dy.dt)))
+    }
+  })
+}
+
+calculate_ramet_eq <- function(u,p) {
+  
+  # u is the light requirement per species that satisfies the invasion condition
+  
+  with(as.list(p), {
+    # set vectors
+    S = length(u) # f, m, and k should be the same dimension, number of species
+    y = rep(NA, S)
+    L = rep(NA, S) # light level
+    
+    # First species 
+    L_total = 1 # light level at top of canopy
+    
+    # Search interval, with total light
+    lower_bound <- (1/k[1])*log(L_total/u[1]) # first derivative of f_x
+    upper_bound <- L_total/(k[1]*u[1]) 
+    
+    # numerical root find implicit solution for eq 
+    num_solve <- uniroot(function(x) L_total*(1-exp(-k[1]*x)) - k[1]*u[1]*x, 
+                         lower = lower_bound,
+                         upper = upper_bound)
+    
+    # First Species EQ density
+    y[1] <- max(0,num_solve$root)
+    
+    # Light environment for shorter species
+    L[1] <- L_total*exp(-k[1]*y[1])
+    
+    # Species 2:S
+    
+    if(S > 1) {
+      for (i in 2:S) {
+        
+        # define search interval
+        lower_bound <- (1/k[i])*log(L[i-1]/u[i]) # first derivative of f_x
+        upper_bound <- L[i-1]/(k[i]*u[i])
+        
+        # numerical root find
+        num_solve <- uniroot(function(x) L[i-1]*(1-exp(-k[i]*x)) - k[i]*u[i]*x, 
+                             lower = lower_bound,
+                             upper = upper_bound)
+        y[i] <- max(0, num_solve$root)
+        
+        # set light below canopy i
+        L[i] <- L[i-1]*exp(-k[i]*y[i])
+      }
+    L_above <- c(L_total, L[1:(i-1)])
+    }  
+    else { # do nothing, only one specie
+      L_above <- L_total
+    }
+    
+    env_eq <- tibble(L_above = L_above, u = u, y = y, L_below = L) %>% 
+      # set extinction. floor
+      # mutate(y = round(y, 4)) %>% 
+      # calculate change in light level below canopy
+      mutate(dL = -(L - lag(L_above,default = L_total))) %>% 
+      mutate(species = paste0("y",1:S)) %>% 
+      
+      # clean up
+      rename(y_eq=y) %>% 
+        
+      # feasiblity
+      mutate(feasible = if_else(round(y_eq,digits = 3) == 0, FALSE, TRUE)) %>% 
+      mutate(light_acquired = L_above-u) %>% 
+      
+      # check time to reproduction
+      mutate(light_per_ramet = L_above/y_eq)
+    
+    return(env_eq)
+  })
+}
+```
+
+
+# Figure 1 - Model Cartoon 
+
+
+# Figure 2 - Multi-Species model 
+
+## Parameters from "Process Informed Metric"
+This code chooses a set number "S" of species randomly along the "light requirement (u_i)" trait axes. It that back-calculates the heights and biomass of each species from the light requirement (u). From this, and the parameters conserved across species, you can calculate fecundity and mortality to pass to the ODE solver. 
+
+```{r}
+# Parameters ---- 
+# Choose number of species + initial conditions
+S <- 30
+
+# Set generic parameters
+a <- 10
+r <- 2
+b <- 0.6
+beta <- 5
+m <- 0.1 # mortality
+k <- 2 # crown area + light extinction
+
+# Generate species PIM
+u_min <- r/(a*k)
+u_min
+u <- sort(runif(S, min = u_min, max = 1), decreasing =T) # u_min = 0.01
+
+# Ramet morphology & demography
+height = ((a*k*u-r)/(m*b))^(1/beta)
+biomass <- b*height^beta
+fi <- a/biomass
+mi <- r/biomass + m
+ki <- rep(k,S)
+ui = mi/(fi*k)
+
+p <- setNames(list(fi,mi,ki,1), c("f","m","k","L_above"))
+```
+
+
+### Equilibrium solution
+```{r}
+# Equilibrium
+eq_table <- calculate_ramet_eq(u,p) %>% mutate(species = paste0("y",1:S)) %>% 
+  rename(y_eq=y) %>% 
+  
+  # check time to reproduction
+  mutate(light_per_ramet = L_above/y_eq)%>% 
+  mutate(height = ((a*k*u-r)/(m*b))^(1/beta)) %>% 
+  mutate(biomass = b*height^beta) %>% 
+  mutate(fecundity = a/biomass) %>% 
+  mutate(mortality = r/biomass + m) %>% 
+  
+  # feasiblity
+  mutate(feasible = if_else(y_eq == 0, FALSE, TRUE)) %>% 
+  mutate(light_acquired = L_above-u)
+
+y_max <- max(0.5,max(eq_table$y_eq*1.05))
+
+# Assess Equilibrium Abundance
+model_eq_analytical <- eq_table %>% 
+  filter(feasible == TRUE) %>% 
+  ggplot(aes(x=u, y=y_eq)) + 
+    #geom_rect(aes(xmin = L_below, xmax = u,ymin = 0, ymax = max(eq_table$y_eq), alpha = 0.9)) + #alpha = if_else(y_eq==0, Inf, y_eq))) +
+    scale_color_manual(values = c("red", "black")) +
+    geom_hline(yintercept=0, color = "red", linetype = 2) + 
+    #geom_vline(xintercept = eq_table$L_below, color = "grey") + 
+  geom_point(data = eq_table, aes(x = u, y = y_eq, color = feasible), size=3) + 
+  labs(x = "Light Requirement", y = "Ramet Density") + 
+  lims(y = c(0,y_max))
+
+# # Normalized Equilbirium Abundance
+# eq_table %>%
+#   mutate(y_norm = y_eq/light_acquired) %>%
+#   mutate(feasible = if_else(y_eq == 0, FALSE, TRUE)) %>%
+#   ggplot(aes(x=u, y=y_norm))+
+#     scale_color_manual(values = c("red", "black")) +
+#     geom_hline(yintercept=0, color = "red", linetype = 2) +
+#     #geom_vline(xintercept = eq_table$L_below, color = "grey") +
+#     #geom_rect(aes(xmin = L_below, xmax = u,ymin = 0, ymax = max(eq_table$y_eq), alpha = if_else(y_eq==0, Inf, y_eq))) +
+#   geom_point(aes(color = feasible, x = u, y = y_norm), size = 3) +
+#   geom_function(fun = function(x) 1/(k*x), color = "grey")
+
+```
+
+### ODE Simulation
+```{r}
+# Simulation
+# Set timespan
+t = seq(from=0,to=1/p$m[1]*2000,by=0.1)
+#t = seq(from=0,to=400,by=0.01)
+
+# Initial conditions
+y0 = rep(0.01,S)
+#y0 = eq_table$y_eq
+
+# Integrate
+out = ode(y=y0,times=t,func=simulate_ramets,parms=p);
+
+# Arrange Data
+data <- as_tibble(as.data.frame(out))
+colnames(data) <- c("time", paste0("y",1:S))
+viz_data <- data %>% pivot_longer(cols = contains("y"), 
+                                  names_to = "species", values_to = "value") %>% 
+  left_join(eq_table)
+
+# Plot 
+model_eq_sim <- ggplot(viz_data, aes(x = time, y = value)) + 
+  geom_line(aes(color = species, group = species))+ 
+  geom_hline(aes(yintercept = y_eq, color = species), linetype = 3)+
+  theme_bw() + 
+  labs(x = "Time", y="Ramet Density") + 
+  scale_color_discrete(name = "Species") + 
+  lims(y = c(0,y_max))
+
+```
+
+## Parameters from Physiology
+This code reads the parameter values written in "ramet_parameters.csv" that describe parameters consistent across species. It generates a list of species heights, then calculates the minimum light requirement required per species (key trait that determines coexistence potential). 
+
+It then generates a set of derived parameters (fecundity, mortality) for each species that can be passed to the ODE solver. 
+
+```{r}
+# generate parameters for S species from physiology
+S <- 30
+
+# species generic parameters
+a <- 10
+r <- 2
+b <- 0.6
+beta <- 5
+m <- 0.1 # mortality
+k <- 2 # crown area + light extinction
+
+p_phys <- setNames(list(a, r, b, beta, m, k), 
+                   c("a","r","b","beta", "m","k"))
+  # p_phys is a list of species-specific parameters: 
+  # b : biomass density
+  # beta : power law allometry
+  # m : mortality
+  # a : photosynthetic rate
+  # r : respiration rate
+  # k : light capture per ramet
+  # c : crown area per ramet
+  # L_above : light at top of canopy
+
+# calculate minimum u "minimum light requirement"
+u_min <- r/(a*k)
+
+# calculate maximum height (for minimum light requirement = 1)
+h_max <- ((a*k - r)/(m*b))^(1/beta)
+
+# generate uniform distribution of heights
+heights <- sort(runif(S, min = 0, max = h_max), decreasing =T)
+
+# calculate minimum light requirement
+biomass <- b*heights^beta
+fi <- a/biomass
+mi <- r/biomass + m
+ki <- rep(k,S)
+ui = mi/(fi*k)
+
+# Set parameter list for numerical solution to Equilibrium
+p <- setNames(list(fi,mi,ki,1), c("f","m","k","L_above"))
+```
+
+### Analytical EQ
+```{r}
+# Calculate Equilibria
+(eq_table <- calculate_ramet_eq(ui,p))
+
+# Assess Equilibrium Abundance
+y_max <- max(0.5,max(eq_table$y_eq*1.05)) # y limit for graph
+
+(model_eq_analytical <- eq_table %>% 
+  filter(feasible == TRUE) %>% 
+  ggplot(aes(x=u, y=y_eq)) + 
+    #geom_rect(aes(xmin = L_below, xmax = u,ymin = 0, ymax = max(eq_table$y_eq), alpha = 0.9)) + #alpha = if_else(y_eq==0, Inf, y_eq))) +
+    scale_color_manual(values = c("red", "black")) +
+    geom_hline(yintercept=0, color = "red", linetype = 2) + 
+    #geom_vline(xintercept = eq_table$L_below, color = "grey") + 
+  geom_point(data = eq_table, aes(x = u, y = y_eq, color = feasible), size=3) + 
+  scale_alpha_manual(values = c(1,0))+
+  labs(x = "Light Requirement", y = "Ramet Density") + 
+  lims(y = c(0,y_max)))
+
+# Light Availabililty
+
+canopy_above <- c(0, cumsum(eq_table$y_eq))
+light_below <- c(1, eq_table$L_below)
+light_env <- tibble(canopy_above = canopy_above, light_below=light_below)
+
+light_env %>% 
+  ggplot(aes(x=1-light_below, y = canopy_above)) + 
+  geom_point() + 
+  scale_y_reverse()
+```
+
+### ODE Simulation
+```{r}
+# Simulation
+# Set timespan
+t = seq(from=0,to=1/p$m[1]*100,by=0.01)
+#t = seq(from=0,to=1000,by=0.01)
+
+# Initial conditions
+y0 = rep(0.1,S)
+#y0 = eq_table$y_eq/3
+
+# Integrate
+out = ode(y=y0,times=t,func=simulate_ramets,parms=p);
+
+# Arrange Data
+data <- as_tibble(as.data.frame(out))
+colnames(data) <- c("time", paste0("y",1:S))
+viz_data <- data %>% pivot_longer(cols = contains("y"), 
+                                  names_to = "species", values_to = "value") %>% 
+  left_join(eq_table)
+
+# Plot 
+model_eq_sim <- ggplot(viz_data, aes(x = time, y = value)) + 
+  geom_line(aes(color = species, group = species))+ 
+  geom_hline(aes(yintercept = y_eq, color = species), linetype = 3)+
+  theme_bw() + 
+  labs(x = "Time", y="Ramet Density") + 
+  scale_color_discrete(name = "Species") + 
+  lims(y = c(0,y_max))
+```
+
+### Abundance vs Height distribution 
+
+#### 30 species
+```{r}
+
+# number of iterations 
+iter <- 10^4
+
+# number of species 
+S <- 30
+
+# species generic parameters
+a <- 10
+r <- 2
+b <- 0.6
+beta <- 5
+m <- 0.1 # mortality
+k <- 2 # crown area + light extinction
+
+# maximum height 
+h_max <- ((a*k - r)/(m*b))^(1/beta)
+h_higher <- h_max*1.25
+
+# make a dataframe to fill
+df <- tibble(iter=numeric(),
+                 species=character(), 
+                 height=numeric(), 
+                 u=numeric(),
+                 y_eq=numeric()) 
+
+# calculate eq. abundance for multiple iterations
+for (i in seq(1:iter)){
+
+    # choose heights (uniform distribution)
+  heights <- sort(runif(S, min = 0, max = h_higher), decreasing =T)
+  
+  # calculate minimum light requirement + species parameters 
+  biomass <- b*heights^beta
+  fi <- a/biomass
+  mi <- r/biomass + m
+  ki <- rep(k,S)
+  ui = mi/(fi*k) # min light requirement
+
+  # Set parameter list for numerical solution to equilibrium
+  p <- setNames(list(fi,mi,ki,1), c("f","m","k","L_above"))
+  
+  # calculate anayltical eq abundance
+  eq_abundance <- calculate_ramet_eq(ui, p) %>% 
+    mutate(iter = i) %>% 
+    rename(species = species)
+  eq_abundance$height <- heights
+  
+  # bind to dataframe
+  return_eq <- eq_abundance %>% 
+    select(iter, species, height, u, y_eq, everything())
+  
+  df <- bind_rows(df, return_eq)
+}
+
+
+# height bins 
+nbins = 1000
+H <- seq(0,h_higher,length.out = nbins+1)
+U <- seq(0,1,length.out = nbins+1)
+
+N = N_u = L_a = L_b <- numeric(nbins) # initialize vectors
+
+for (i  in seq(1:nbins)) {
+  
+  # bin by height or light requirement (u)
+  N[i]=mean(df$y_eq[df$height >= H[i] & df$height < H[i+1]])
+  N_u[i]=mean(df$y_eq[df$u >= U[i] & df$u < U[i+1]])
+  
+  # light above and below
+  L_a[i]=mean(df$L_above[df$height >= H[i] & df$height < H[i+1]])
+  L_b[i]=mean(df$L_below[df$height >= H[i] & df$height < H[i+1]])
+}
+
+# plot abundance vs height
+plot_height_dist <- plot(H[1:nbins],N)
+
+# plot abundance vs light requirement
+plot(U[1:nbins],N_u)
+
+# plot light vs height
+ggplot(df, aes(x=height, y = L_above)) + 
+  geom_point()
+plot(H[1:nbins],L_a)
+
+plot(H[1:nbins],L_a-L_b)
+plot(L_a, N)
+
+```
+
+#### 100 Species
+Tried the code but it got stuck finding the analytical solution... upper and lower bound were reveresed or something like that. 
+
+### Figure 2 
+```{r}
+(fig2 <- plot_grid(model_eq_analytical, model_eq_sim, plot_height_dist))
+```
+
+# Figure 3 - Multiple Mechanisms for Productivity
+
+1. Choose the species heights from the previous simulation. 
+2. Recalculate the light requirement with a higher photosynthetic rate.
+3. Recalculate species abundances, creating df_a.
+
+
+## Increase a
+```{r}
+
+a_multiplier = 1.5
+
+# make a dataframe to fill
+df_a <- tibble(iter=numeric(),
+                 species=character(), 
+                 height=numeric(), 
+                 u=numeric(),
+                 y_eq=numeric()) 
+
+# calculate eq. abundance for multiple iterations
+for (i in seq(1:iter)){
+
+    # choose heights (uniform distribution)
+  heights <- df$height[df$iter == i]
+  
+  # calculate minimum light requirement + species parameters 
+  biomass <- b*heights^beta
+  fi <- a*a_multiplier/biomass
+  mi <- r/biomass + m
+  ki <- rep(k,S)
+  ui = mi/(fi*k) # min light requirement
+
+  # Set parameter list for numerical solution to equilibrium
+  p <- setNames(list(fi,mi,ki,1), c("f","m","k","L_above"))
+  
+  # calculate anayltical eq abundance
+  eq_abundance <- calculate_ramet_eq(ui, p) %>% 
+    mutate(iter = i) 
+    
+  eq_abundance$height <- heights
+  
+  # bind to dataframe
+  return_eq <- eq_abundance %>% 
+    select(iter, species, height, u, y_eq, everything())
+  
+  df_a <- bind_rows(df_a, return_eq)
+}
+
+# height bins 
+nbins = 1000
+H <- seq(0,h_higher,length.out = nbins+1)
+U <- seq(0,1,length.out = nbins+1)
+
+N = N_u = L_a = L_b <- numeric(nbins) # initialize vectors
+
+for (i  in seq(1:nbins)) {
+  
+  # bin by height or light requirement (u)
+  N[i]=mean(df_a$y_eq[df_a$height >= H[i] & df_a$height < H[i+1]])
+  N_u[i]=mean(df_a$y_eq[df$u >= U[i] & df_a$u < U[i+1]])
+  
+  # light above and below
+  L_a[i]=mean(df_a$L_above[df$height >= H[i] & df_a$height < H[i+1]])
+  L_b[i]=mean(df_a$L_below[df$height >= H[i] & df_a$height < H[i+1]])
+}
+
+# plot abundance vs height
+plot_height_dist <- plot(H[1:nbins],N)
+
+# plot abundance vs light requirement
+plot(U[1:nbins],N_u)
+
+# plot light vs height
+ggplot(df, aes(x=height, y = L_above)) + 
+  geom_point()
+plot(H[1:nbins],L_a)
+
+plot(H[1:nbins],L_a-L_b)
+plot(L_a, N)
+
+df_a <- df_a %>% mutate(sim = "a_inc")
+
+
+## comparison 
+df_comp <- df %>% mutate(sim = "normal") %>% 
+  bind_rows(df_a) 
+
+df_binned <- df_comp %>% 
+  mutate(bin = round(height/h_higher,digits = 3))
+
+df_binned %>% 
+  group_by(bin,sim) %>% 
+  summarize(mean_abundance = mean(y_eq)) %>% 
+  ggplot(aes(x=bin*h_higher, y = mean_abundance, color = sim)) + 
+  geom_point(size=3) + 
+  labs(x = "Height", y = "Abundance")
+
+## Species richness
+df_comp %>% 
+  group_by(iter,feasible,sim) %>% 
+  summarize(richness=n()) %>% 
+  ggplot(aes(x = sim, y = richness)) + 
+  geom_boxplot(aes(fill = feasible))
+
+```
+
+### Increase a infilling only
+```{r}
+# make a dataframe to fill
+df_infill <- tibble(iter=numeric(),
+                 species=character(), 
+                 height=numeric(), 
+                 u=numeric(),
+                 y_eq=numeric()) 
+
+# calculate eq. abundance for multiple iterations
+for (i in seq(1:iter)){
+
+    # choose heights (uniform distribution)
+  heights <- df$height[df$iter == i]
+  
+  # calculate minimum light requirement + species parameters 
+  biomass <- b*heights^beta
+  fi <- a*a_multiplier/biomass
+  mi <- r/biomass + m
+  ki <- rep(k,S)
+  ui = mi/(fi*k) # min light requirement
+
+  # Set parameter list for numerical solution to equilibrium
+  p <- setNames(list(fi,mi,ki,1), c("f","m","k","L_above"))
+  
+  # calculate anayltical eq abundance
+  eq_abundance <- calculate_ramet_eq(ui, p) %>% 
+    mutate(iter = i) %>% 
+  eq_abundance$height <- heights
+  
+  # bind to dataframe
+  return_eq <- eq_abundance %>% 
+    select(iter, species, height, u, y_eq, everything())
+  
+  df_infill <- bind_rows(df_infill, return_eq)
+}
+
+```
+
+## Increase k
+
+## Increase d
+
+# Figure 3 - Case #1 Infilling
+This case describes a scenario where all S increase in productivity (a = photosynthetic rate) the same amount. 
+
+## Figure 3
+```{r}
+S = 30
+set.seed(1)
+
+# Normal Tundra 
+p <- make_parameters(S=S, a=10)
+ui_norm = p$m/(p$f*p$k)
+
+norm_eq <- calculate_ramet_eq(ui_norm,p) %>%
+  # scenario
+  mutate(scenario = "normal")
+
+# Warmer Tundra: increase productivity (a) of all species
+p_w <- p
+p_w$f <- p$f*1.5
+ui_warm <-p_w$m/(p_w$f*p_w$k)
+
+warm_eq <- calculate_ramet_eq(ui_warm,p) %>% 
+  # scenario
+  mutate(scenario = "warmer")
+
+compare_eq <- norm_eq %>% bind_rows(warm_eq)
+
+y_max = max(compare_eq$y_eq*1.01)
+
+## VIZ
+
+plot_compare_eq <- compare_eq %>% ggplot(aes(x=u, y=y_eq)) + 
+    geom_hline(yintercept=0, color = "red", linetype = 2) + 
+    geom_point(aes(x = u, y = y_eq, color = species, shape=feasible), size=3) + 
+  scale_shape_manual(values = c(1,16)) +
+  labs(x = "Light Requirement", y = "Ramet Density") + 
+  lims(y=c(0,y_max)) + 
+  facet_wrap(vars(scenario)) + 
+  theme_bw()
+
+(fig3 <- plot_compare_eq)
+
+```
+
+# Figure 4 - Case #2 Range Expansion
+Add a taller species 
+
+```{r}
+# Double productivity (a) 
+p_w <- p
+p_w$f <- p$f*2
+ui_warm <-p_w$m/(p_w$f*p_w$k)
+
+# Add taller species
+u_tree <- runif(1, min = max(ui_warm), max = 1)
+#u_tree <- 0.8
+ui_range <- c(u_tree, ui_warm)
+
+# parameters
+height = ((a*k*u_tree-r)/(m*b))^(1/beta)
+biomass <- b*height^beta
+f_range <- c(a/biomass, p_w$f)
+m_range <- c(r/biomass, p_w$m)
+
+p_range <- setNames(list(f_range,m_range,k= rep(k,length(m_range)),1), c("f","m","k","L_above"))
+
+# EQ conditions w/range expansion
+
+compare_range_eq <- calculate_ramet_eq(ui_range, p_range) %>% mutate(species = paste0("y",0:S)) %>%
+  # scenario
+  mutate(scenario = "range_expansion") %>% 
+  
+  #add to other scenario
+  bind_rows(warm_eq)
+
+## Plot 
+plot_range_eq <- compare_range_eq %>% ggplot(aes(x=u, y=y_eq)) + 
+    geom_hline(yintercept=0, color = "red", linetype = 2) + 
+    geom_point(aes(x = u, y = y_eq, color = species, shape=feasible), size=3) + 
+  scale_shape_manual(values = c(1,16)) +
+  labs(x = "Light Requirement", y = "Ramet Density") + 
+  lims(y=c(0,y_max)) + 
+  facet_wrap(vars(scenario)) + 
+  theme_bw()
+
+(fig4 <- plot_range_eq)
+
+```
+
+# Figure 5 - Case #3 Height Plasticity 
+
+```{r}
+
+```
+
+
+#### Extra Code
+
+##### Old "Parameters from Physiology" at set sequence of intervals code
+```{r}
+
+# read species-agnostic parameters
+# param_file <- "3_ramet_light_model/ramet_parameters.csv"
+# p_table <- read_csv(param_file)
+# p_list <- setNames(as.list(p_table$value), p_table$parameter) 
+
+# calculate species-specific parameters
+min_height <- 2
+max_height <- 120 
+sp_heights <- tibble(species = paste0("y", seq(1:S)), value = seq(max_height, min_height, length.out = S)) %>%  # indexed tallest to shortest 
+  mutate(parameter = "h", description = "height", unit = "cm")
+
+# calculate species-specific rates: f, m, kc 
+## f : fecundity
+## m : mortality
+## k : light capture per ramet, k is the extinction coefficient and c is canopy leaf area
+
+
+p_sp <- with(as.list(p_list), { # p is a list of species-specific parameters: 
+  k <- rep(k, S) # light capture, for future crown size differences
+  fi <- a/(b*sp_heights$value^beta) # fecundity
+  mi <- r/(b*sp_heights$value^beta) + m
+  
+  p <- setNames(list(fi,mi,k), c("f", "m", "k"))
+  return(p)
+})
+
+# set environmental parameters
+## L_above : light available above the canopy 
+env_values <- p_table%>% filter(species == "env") %>% pull(value)
+env_names <- p_table %>% filter(species == "env") %>% pull(parameter)
+p_env <- setNames(as.list(env_values), env_names) 
+
+# full parameter list: species + environment parameters 
+p <- c(p_sp, p_env)
+(sp_table <- sp_heights %>% 
+  rename(height = value) %>% 
+  select(-parameter,-description, -unit) %>% 
+  mutate(biomass = p_list$b*height^p_list$beta) %>% 
+  mutate(f = p$f, m = p$m, k = p$k) %>% 
+  mutate(ui = m/(f*k))) # calculate light requirement (u) per species
+
+ui <- sp_table$ui
+#histogram of light requirement
+hist(ui[ui<1],breaks=100)
+```
+

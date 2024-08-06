@@ -3,9 +3,9 @@ title: "Tundra Light Extinction Model"
 author: "Ruby An"
 date: "2024-01-12"
 output:
+  pdf_document: default
   html_document:
     number_sections: true
-  pdf_document: default
 editor_options:
   chunk_output_type: console
 ---
@@ -37,14 +37,12 @@ We then test how environmental change (warming, longer growing seasons, higher n
 
 # Model Description
 
-
-
 This model tracks the density of ramets ($X_{i}$ -- the number of individual ramets of species $i$ in a given unit area) in continuous time. For ease of notation, we order species from tallest to shortest ramet height: 
 
 $$ H_{1} > H_{2} > \cdots > H_{j} > H_{i} > \cdots > H_{Q} \text{ for species } i = 1, 2, ..., Q   $$
 In this imagination of the tundra world, ramets never "grow in height", but are instantaneously born at their species-specific height once a "mother ramet" has accumulated enough carbon. This means that each species occupies only one specific height $H_i$ in the canopy at any given point in time. This simplifies the description of the light environment, such that we are able to easily calculate equilibrium environmental conditions, ramet densities, and coexistence criterion. 
 
-![Diagram of the tundra ramet model of light competition.](/Users/ruby/Projects/shrub_model/diagrams/tundra_ramet_world.png) 
+![Diagram of the tundra ramet model of light competition.](/Users/ruby/Projects/shrub_model/diagrams/two_ramets_compete_for_light.png) 
 
 ## Ramet Allometry
 
@@ -64,7 +62,32 @@ We fix ramet crown area to be equal for all species.
 
 $$ C_i = C_j = c, \quad \forall i,j $$
 
-## Ramet Carbon Economy 
+## Light Competition
+
+The first version of this model includes only competition for light, assuming light extinction following Beer's law. 
+
+Definitions: 
+
+\begin{align}
+& L_0 &&= 1 && \text { the total light available above the canopy of all species} \\
+& L_{i-1} &&= e^{-kc\sum_{j=1}^{i-1}X_j} && \text{ the light available below canopy $i-1$, thus above canopy $i$} \\
+& L_{i} &&= e^{-kc\sum_{j=1}^{i}X_j} && \text{ the light available below canopy $i$ } \\
+& L_{i}^a && = L_{i-1} - L_{i}  = e^{-kc\sum_{j=1}^{i-1}X_j} (1-e^{-kcX_i}) && \text{ the light absorbed by species $i$} \\
+& L_{R_i} &&= \frac{L_{i-1} - L_{i}}{X_i} && \text{ the light available to a single ramet of species } i \\
+\end{align}
+
+Each species occupies one height $H_i$ in the canopy. The light that reaches the canopy height of species $i$ is set by the number of ramets of species taller ($j < i$) than species $i$. Ramets of species $i$ share the light that reaches their canopy equally. 
+
+The light that reaches each ramet $R_i$ depends on: 
+
+1. The light that reaches canopy $i$, $L_{i-1}$ 
+2. The size of canopy $i$, i.e. how much light all the ramets of species $i$ block, $(1 - e^{-kc X_i}$)
+3. how many ways ramets of species $i$ need to share the captured light, $X_i$.
+
+Each ramet of species $i$ gets an equal "piece of the light" absorebed at that height level. 
+
+
+## Carbon Gain and Loss
 
 Carbon gain per ramet is determined by light availability. When exposed to a given light level ($L_{R_i}$), ramets gain carbon through photosynthesis ($A(L_{R_i})$) and lose carbon due to respiration and maintenance costs ($r$). The carbon accumulation rate of a ramet of species $i$ when exposed to light level $L_{R_i}$, is given by: 
 
@@ -88,7 +111,7 @@ At equilibrium, $\hat T_i$ is a fixed value for each species. This value sets th
 
 Ramets die at a constant species-specific mortality rate, $m_i$. 
 
-## Ramet population dynamics
+## Population Dynamics
 
 In this model, we track the number of individual ramets per species per unit area (i.e. $X_i(t)$ is the density of species $i$ over time). 
 
@@ -118,87 +141,56 @@ By setting these equal, we can solve for $\hat L_{R_i}$, the level of light per 
 
 $$\hat L_{R_i} = \frac{1}{a} \left( \frac{m_i B_i}{ln(2) c} + r \right)$$
 
-## Light Competition and Environment
 
-The first version of this model includes only competition for light, assuming light extinction following Beer's law. Verbally, each species occupies one height $H_i$ in the canopy. Definitions: 
+# Model Analysis
 
-\begin{align}
-& L_0 &&= 1 && \text { the total light available above the canopy of all species} \\
-& L_{i-1} &&= e^{-kc\sum_{j=1}^{i-1}X_j} && \text{ the light available below canopy $i-1$, thus above canopy $i$} \\
-& L_{i} &&= e^{-kc\sum_{j=1}^{i}X_j} && \text{ the light available below canopy $i$ } \\
-& L_{i}^a && = L_{i-1} - L_{i}  = e^{-kc\sum_{j=1}^{i-1}X_j} (1-e^{-kcX_i}) && \text{ the light absorbed by species $i$} \\
-& L_{R_i} &&= \frac{L_{i-1} - L_{i}}{X_i} && \text{ the light available to a single ramet of species } i \\
-\end{align}
+## Establishment Condition
 
-The light that reaches the canopy height of species $i$ is set by the number of ramets of species taller ($j < i$) than species $i$. Ramets of species $i$ share the light that reaches their canopy equally. 
+The biomass of a ramet increases in proportion to height to the 5th power. This means that the taller the species, the longer it will take a ramet to accumulate enough carbon to reproduce. We can plot the "light required for a species of height x" to invade from rare, e.g. lifetime reproductive success > 0 assuming no other ramets of the same species, as given below. 
 
-The light that reaches each ramet $R_i$ depends on: 
+This means that the light must be AT LEAST this level in order for species of a given height to establish. 
 
-1. The light that reaches canopy $i$, $L_{i-1}$ 
-2. The size of canopy $i$, i.e. how much light all the ramets of species $i$ block, $(1 - e^{-kc X_i}$)
-3. how many ways ramets of species $i$ need to share the captured light, $X_i$.
+```{r}
+# full parameter list: species + environment parameters 
+p <- list(v = 1, # leaf density: leaf area per unit canopy area
+             b = 1, # fecundity
+             m = 1, # mortality
+             a = 10, # photosynthetic carbon gain
+             r = 2, # leaf respiration
+             c_l = 0.5, # construction costs of leaves
+             L_above = 100 # light level above the canopy
+             )
 
-Each ramet of species $i$ gets an equal "piece of the light" absorebed at that height level. 
+with(as.list(p), {
+  # establishment criterion
+  H_0 <- (log(2)*v/(b*m)*(a-r-c_l))^(1/5)
 
+  # light environment
+  L_0 <- L_above
 
-## Light requirement at equlibrium
+  # light required by height
+  H <- seq(0, H_0,length.out=100)
+  L = (1/a)*(H^5*b*m/(log(2)*v)+r+c_l)
+
+  data <- tibble(height = H, light = L)
+  ggplot(data, aes(x=height, y = light)) +
+    geom_line() +
+    geom_hline(yintercept = (r + c_l)/a, linetype = 2, color = "orange") +
+    geom_vline(xintercept = H_0, linetype = 1, color = "blue") #+
+    #lims(y = c(0,1))
+})
+
+```
+
+## Equlibrium Light Requirement
 
 From the descirption of light competition, we have an expression for the light available to a single ramet of species $i$. From the demography and physiology of the system, we know the light level required per ramet for the system to be at equilibrium. 
-
 \begin{align}
 & L_{R_i} &&= \frac{L_{i-1} - L_{i}}{X_i} && \text{ the light available to a single ramet of species } i \\
 & \hat L_{R_i} &&= \frac{1}{a} \left( \frac{m_i B_i}{ln(2) c} + r \right) && \text{ light requirement per ramet at equilibrium}
 \end{align}
 
-Based on our formulation of asymmetric light competition, $\hat L_{R_i}$ is a function of $\hat X_j$ for $j \leq i$. This then gives us an implicit expression for the equilibrium density of each species $\hat X_i$ based on the density of taller species. 
-
-
-
-## Light requirement for establishment
-
-## EQ density with light requirement as a continous trait 
-
-# Simulations 
-
-## Parameters
-```{r cars}
-param_file <- "3_tundra_coexistence_model/ramet_parameters.csv"
-params <- read_csv(param_file)
-p_list <- setNames(as.list(params$value), params$parameter)
-
-# put them in the environment
-list2env(p_list, envir = environment())
-
-## listed parameters
-kable(params, "pipe") # output parameter table in Markdown
-```
-
-## Light required for establishment
-The biomass of a ramet increases in proportion to height to the 5th power. This means that the taller the species, the longer it will take a ramet to accumulate enough carbon to reproduce. We can plot the "light required for a species of height x" to invade from rare, e.g. lifetime reproductive success > 0 assuming no other ramets of the same species, as given below. 
-
-This means that the light must be AT LEAST this level in order for the ramet to invade. 
-
-```{r}
-
-# establishment criterion
-H_0 <- (log(2)*v/(b*m)*(a-r_l-c_l))^(1/5)
-
-# light environment
-L_0 <- 1
-
-# light required by height
-H <- seq(0, H_0,length.out=100)
-L = (1/a)*(H^5*b*m/(log(2)*v)+r_l+c_l)
-
-data <- tibble(height = H, light = L)
-ggplot(data, aes(x=height, y = light)) +
-  geom_line() + 
-  geom_hline(yintercept = (r_l + c_l)/a, linetype = 2, color = "orange") + 
-  geom_vline(xintercept = H_0, linetype = 1, color = "blue")+
-  lims(y = c(0,1))
-
-```
-
+Based on our formulation of asymmetric light competition, $\hat L_{R_i}$ is a function of $\hat X_j$ for $j \leq i$. This then gives us an implicit expression for the equilibrium density of each species $\hat X_i$ based on the density of taller species.
 
 ## Equilbrium Density of light extinction model w/height reproduction trade-off
 
@@ -218,7 +210,6 @@ Outputs:
 - n: vector of equilibrium species density
 - u: vector species-specific minimum light level 
 - L: vector of light level 
-
 
 ### Equilibrium density as a function of light available - from implicit expression
 
@@ -251,6 +242,23 @@ ggplot(eq_state, aes(x = trait, y = density)) +
   lims(x = c(0,1)) + 
   labs(y = "equilbirium density (indiv/area)", x = "light requirement",
        title = "Equilibrium Density of the Tallest Species") 
+```
+
+## Equilibrium Density
+
+# Model Simulations 
+
+## Parameters
+```{r cars}
+param_file <- "3_ramet_light_model/ramet_parameters.csv"
+params <- read_csv(param_file)
+p_list <- setNames(as.list(params$value), params$parameter)
+
+# put them in the environment
+list2env(p_list, envir = environment())
+
+## listed parameters
+kable(params, "pipe") # output parameter table in Markdown
 ```
 
 ### Equilibrium density - sequential solution for multispecies community
@@ -380,16 +388,16 @@ light_extinction_warmed <- function(S,k,u_min) {
 
 ```
 
-## EQ density of community
+## Climate Change Scenarios
 ```{r}
 
 set.seed(1) 
 L_0 <- 1
 
 # calculate community
-eq_state <- light_extinction(S=10, # of species
+eq_state <- light_extinction(S=50, # of species
                              k=0.5, # light extinction
-                             u_min = r_l/(a*k)) %>% # phys. limit of light
+                             u_min = r/(a*k)) %>% # phys. limit of light
   mutate(feasible = if_else(x == 0, FALSE, TRUE))
 
 # plot numerical solution
@@ -428,10 +436,80 @@ ggarrange(eq_plot, eq_plot_norm, ncol = 2, nrow = 1)
 ```{r}
 
 set.seed(1)
-u_min <- r_l/(a*k)
+u_min <- 0.02 #r/(a*k)
 
 # calculate community
-eq_state <- light_extinction(S=100, # of species
+eq_state <- light_extinction(S=30, # of species
+                             k=0.5, # light extinction
+                             u_min = u_min) %>% # phys. limit of light
+  mutate(feasible = if_else(x == 0, FALSE, TRUE))
+
+# plot numerical solution
+eq_plot <- eq_state %>%
+  ggplot(aes(x=u, y=x)) + 
+  #geom_vline(xintercept = eq_state$L, color = "grey") + 
+  scale_color_manual(values = c("red", "black")) +
+  geom_hline(yintercept=0, color = "red", linetype = 2)  + 
+  #geom_rect(aes(xmin = L, xmax = u,ymin = -0.02,ymax = 0.02, alpha = if_else(x==0, Inf, 0.4))) + 
+  
+  # points
+  geom_point(aes(color = feasible), size=3)  + 
+ # lims(x = c(0,1), y = c(0,1)) +
+  #labs(title = "Species EQ. density")
+  theme(text=element_text(size=20), legend.position = "none") + 
+  labs(x = "species light requirement", y = "density")
+    
+
+# calculate community
+eq_state_w <- light_extinction_warmed(S=30, # of species
+                             k=0.5, # light extinction
+                             u_min = u_min) %>% # phys. limit of light
+  mutate(feasible = if_else(x == 0, FALSE, TRUE))
+
+# plot WITH WARMING numerical solution
+eq_plot_w <- eq_state_w %>%
+  ggplot(aes(x=u, y=x)) + 
+  #geom_vline(xintercept = eq_state$L, color = "grey") + 
+  scale_color_manual(values = c("red", "black")) +
+  geom_hline(yintercept=0, color = "red", linetype = 2)  + 
+  #geom_rect(aes(xmin = L, xmax = u,ymin = -0.02,ymax = 0.02, alpha = if_else(x==0, Inf, 0.4))) + 
+  
+  # points
+  geom_point(aes(color = feasible), size=3)  + 
+  #lims(x = c(0,1), y = c(0,1)) +
+  #labs(title = "Species EQ. density")
+  theme(text=element_text(size=20), legend.position = "none") + 
+  labs(x = "species light requirement", y = "density")
+
+# SHRUBIFICATION PLOT
+shrubby_plot <- ggplot() + 
+  #geom_vline(xintercept = eq_state$L, color = "grey") + 
+  
+  # points
+  geom_point(data = eq_state, aes(x=u, y = x, color = feasible), size=3, alpha = 0.2)  + 
+  scale_color_manual(values = c("red", "black")) +
+  geom_hline(yintercept=0, color = "red", linetype = 2)  + 
+ # lims(x = c(0,1), y = c(0,1)) +
+    
+  # shrub points 
+  geom_point(data = eq_state_w, aes(x=u, y = x, color = feasible), size = 3) + 
+  
+  #labs(title = "Species EQ. density")
+  theme(text=element_text(size=20), legend.position = "none") + 
+  labs(x = "species light requirement", y = "density")
+
+ggarrange(eq_plot, shrubby_plot, ncol = 2, nrow = 1)
+
+```
+
+### Control vs Shrubified 
+```{r}
+
+set.seed(1)
+u_min <- r/(a*k)
+
+# calculate community
+eq_state <- light_extinction(S=40, # of species
                              k=0.5, # light extinction
                              u_min = u_min) %>% # phys. limit of light
   mutate(feasible = if_else(x == 0, FALSE, TRUE))
@@ -493,6 +571,7 @@ shrubby_plot <- ggplot() +
 ggarrange(eq_plot, shrubby_plot, ncol = 2, nrow = 1)
 
 ```
+
 
 ### 10 vs 100 species
 ```{r}
@@ -584,82 +663,79 @@ eq_state_100 <- light_extinction(S=100, # of species
 ggarrange(eq_plot, eq_plot_norm, eq_plot_100, eq_plot_norm_100, ncol = 2, nrow = 2)
 ```
 
+## OTHER PLOTS
+
 ### Biomass plot
 
 Here it's important that the minimum light requirement corrresponds to an actually feasible biomass. 
-```{r}
 
-# Minimum light requiremnet as function of ecophysiological rates 
-u_min <- r_l/(a*k)
-
-eq_state <- light_extinction(S=10, # of species
-                             k=0.5, # light extinction
-                             u_min = u_min) %>% # phys. limit of light
-  mutate(feasible = if_else(x == 0, FALSE, TRUE))
-
-
-# biomass plot
-biomass_plot <- eq_state %>%
-    mutate(b = (u*a*k-r_l)/m) %>% 
-  ggplot(aes(x=u, y=b*x)) + 
-  geom_vline(xintercept = eq_state$L, color = "grey") + 
-  scale_color_manual(values = c("red", "black")) +
-  geom_hline(yintercept=0, color = "red", linetype = 2)  + 
-  #geom_rect(aes(xmin = L, xmax = u,ymin = -0.02,ymax = 0.02, alpha = if_else(x==0, Inf, 0.4))) + 
-  
-  # points
-  geom_point(aes(color = feasible))  + 
-  labs(title = "EQ Biomass Distribution")
-
-
-ggarrange(biomass_plot)
-```
-
-
-## OTHER PLOTS
-
-```{r}
-
-eq_state <- light_extinction(S=10000, # of species
-                             k=0.5, # light extinction
-                             u_min = u_min) %>% # phys. limit of light
-  mutate(feasible = if_else(x == 0, FALSE, TRUE))
-
-eq_community_density <- eq_state$x %>% sum()
-
-eq_state <- eq_state %>% mutate(relative_x = x/eq_community_density)
-
-
-# Rank abundance curve
-eq_state %>%
-  mutate(b = (u*a*k-r_l)/m*x) %>% 
-  mutate(rank = row_number(log(relative_x))) %>% 
-  ggplot(aes(x=-rank, y=log(relative_x))) + 
-  #geom_vline(xintercept = eq_state$L, color = "grey") + 
-  #scale_color_manual(values = c("red", "black")) +
-  geom_hline(yintercept=0, color = "red", linetype = 2)  + 
-  #geom_rect(aes(xmin = L, xmax = u,ymin = -0.02,ymax = 0.02, alpha = if_else(x==0, Inf, 0.4))) + 
-  
-  # points:)
-  geom_point(aes(color =u))  + 
-  
-  labs(title = "Ordered Species EQ. density",
-       x = "Rank Abundance")
-```
-
-## Inter vs. intraspecific competition? 
-
-```{r}
-
-# Impact of "adding a competitor of the same (red) or different (blue) species" 
-
-light_0 <- 1000
-ggplot() +
- geom_function(fun = function(x) -1/(x^2), color = "red") + # same species
- geom_function(fun = function(x) -k*exp(-k*x), color = "blue") + # other species
-  lims(x= c(0,10), y = c(-1, 0)) + 
-  labs(x = "Focal sp. density", y = "change in light received per focal ramet",
-       "Derivative of Light Competition terms w/respect to changes in density")
+### Other scrap code
+```{r, echo = F}
+# 
+# # Minimum light requiremnet as function of ecophysiological rates 
+# u_min <- r/(a*k)
+# 
+# eq_state <- light_extinction(S=10, # of species
+#                              k=0.5, # light extinction
+#                              u_min = u_min) %>% # phys. limit of light
+#   mutate(feasible = if_else(x == 0, FALSE, TRUE))
+# 
+# 
+# # biomass plot
+# biomass_plot <- eq_state %>%
+#     mutate(b = (u*a*k-r)/m) %>% 
+#   ggplot(aes(x=u, y=b*x)) + 
+#   geom_vline(xintercept = eq_state$L, color = "grey") + 
+#   scale_color_manual(values = c("red", "black")) +
+#   geom_hline(yintercept=0, color = "red", linetype = 2)  + 
+#   #geom_rect(aes(xmin = L, xmax = u,ymin = -0.02,ymax = 0.02, alpha = if_else(x==0, Inf, 0.4))) + 
+#   
+#   # points
+#   geom_point(aes(color = feasible))  + 
+#   labs(title = "EQ Biomass Distribution")
+# 
+# 
+# ggarrange(biomass_plot)
+# 
+# ## Other stuff - many species
+# 
+# eq_state <- light_extinction(S=10000, # of species
+#                              k=0.5, # light extinction
+#                              u_min = u_min) %>% # phys. limit of light
+#   mutate(feasible = if_else(x == 0, FALSE, TRUE))
+# 
+# eq_community_density <- eq_state$x %>% sum()
+# 
+# eq_state <- eq_state %>% mutate(relative_x = x/eq_community_density)
+# 
+# 
+# # Rank abundance curve
+# eq_state %>%
+#   mutate(b = (u*a*k-r)/m*x) %>% 
+#   mutate(rank = row_number(log(relative_x))) %>% 
+#   ggplot(aes(x=-rank, y=log(relative_x))) + 
+#   #geom_vline(xintercept = eq_state$L, color = "grey") + 
+#   #scale_color_manual(values = c("red", "black")) +
+#   geom_hline(yintercept=0, color = "red", linetype = 2)  + 
+#   #geom_rect(aes(xmin = L, xmax = u,ymin = -0.02,ymax = 0.02, alpha = if_else(x==0, Inf, 0.4))) + 
+#   
+#   # points:)
+#   geom_point(aes(color =u))  + 
+#   
+#   labs(title = "Ordered Species EQ. density",
+#        x = "Rank Abundance")
+# 
+# ## Inter vs. intraspecific competition? 
+# 
+# # Impact of "adding a competitor of the same (red) or different (blue) species" 
+# 
+# light_0 <- 1000
+# ggplot() +
+#  geom_function(fun = function(x) -1/(x^2), color = "red") + # same species
+#  geom_function(fun = function(x) -k*exp(-k*x), color = "blue") + # other species
+#   lims(x= c(0,10), y = c(-1, 0)) + 
+#   labs(x = "Focal sp. density", y = "change in light received per focal ramet",
+#        "Derivative of Light Competition terms w/respect to changes in density")
 
 ```
 

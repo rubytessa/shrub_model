@@ -6,7 +6,6 @@
 library(tidyverse)
 library(deSolve)
 
-
 # discrete time makes more sense. choose one ramet, accumulates in full sun. next year, makes more ramets. can be a density 
 # can do it as units of leaf area 
 #A_i (leaf area in one year) => G_i (carbon gain, t). A_t+1 = G(t) 
@@ -93,6 +92,9 @@ calculate_ramet_eq <- function(u,p) {
     L_above <- c(L_total, L[1:(i-1)])
     
     env_eq <- tibble(L_above = L_above, u = u, y = y, L_below = L) %>% 
+      # set extinction. floor
+      mutate(y = round(y, 3)) %>% 
+      # calculate change in light level below canopy
       mutate(dL = -(L - lag(L_above,default = L_total)))
     
     return(env_eq)
@@ -101,8 +103,20 @@ calculate_ramet_eq <- function(u,p) {
 
 # Parameters -------
 
+# generate parameters for S species 
 # read species-specific and species-agnostic parameters
 param_file <- "3_ramet_light_model/ramet_parameters.csv"
+params <- read_csv(param_file)
+
+S <- 10
+heights <- tibble(species = paste0("y", seq(1:S)), value = seq(2, 10, length.out = S)) %>% 
+  mutate(parameter = "h", description = "height", unit = "cm")
+
+params_S_sp <- full_join(params, heights)
+write_csv(params_S_sp, "3_ramet_light_model/ramet_parameters_S_sp.csv")
+
+# read species-specific and species-agnostic parameters
+param_file <- "3_ramet_light_model/ramet_parameters_S_sp.csv"
 params <- read_csv(param_file)
 
 all_sp <- params %>% filter(species == "all")
@@ -128,12 +142,6 @@ p_sp <- with(as.list(all_sp_list), {
   return(p)
 })
 
-# calculate light requirement (u) per species
-ui <- with(as.list(p), {
-  ui <- m/(f*k)
-  return(ui)
-})
-
 # p_env is a list of environmental parameters
 # L_above : light available above the canopy 
 
@@ -144,21 +152,31 @@ p <- c(p_sp, p_env)
 
 # Solve EQ analytically
 
-eq_sols <- calculate_ramet_eq(ui,p) %>% mutate(species = paste0("y",1:num_species))
+# calculate light requirement (u) per species
+ui <- with(as.list(p), {
+  ui <- m/(f*k)
+  return(ui)
+})
 
 eq_heights <- sp_heights %>% mutate(species = paste0("y",1:num_species)) %>% 
-  rename(height = value)
+  rename(height = value) %>% 
+  select(-parameter,-description, -unit) %>% 
+  mutate(f = p$f, m = p$m)
 
-eq_sols <- eq_sols %>% left_join(eq_heights) %>% 
-  rename(y_eq=y)
+(eq_sols <- calculate_ramet_eq(ui,p) %>% mutate(species = paste0("y",1:num_species)) %>% 
+  left_join(eq_heights) %>% 
+  rename(y_eq=y) %>% 
+  
+  # check time to reproduction
+  mutate(light_per_ramet = L_above/y_eq))
 
 # Simulations -------
 
 # Set timespan
-t = seq(from=0,to=1/p$m[1]*200,by=0.01)
+t = seq(from=0,to=1/p$m[1]*100,by=0.01)
 
 # Initial conditions
-y0 = rep(0.01,num_species)
+y0 = rep(0.001,num_species)
 
 # Integrate
 out = ode(y=y0,times=t,func=simulate_ramets,parms=p);
@@ -172,7 +190,7 @@ viz_data <- data %>% pivot_longer(cols = contains("y"),
 
 # Plot 
 ggplot(viz_data, aes(x = time, y = value)) + 
-  geom_line(aes(color = factor(height), group = factor(height)))+ 
-  geom_hline(aes(yintercept = y_eq, color = factor(height)), linetype = 3)+
+  geom_line(aes(color = factor(round(height,2)), group = factor(round(height,2))))+ 
+  geom_hline(aes(yintercept = y_eq, color = factor(round(height,2))), linetype = 3)+
   theme_bw() 
 

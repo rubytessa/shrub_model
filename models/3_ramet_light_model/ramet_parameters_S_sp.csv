@@ -1,0 +1,19 @@
+species,parameter,value,description,unit
+all,a,20,rate of leaf photosynthesis,NA
+all,r,4,rate of leaf respiration,NA
+all,c,200,crown area,cm2
+all,b,0.25,biomass density,NA
+all,k,0.5,light decay coefficient,NA
+all,beta,5,height to mass power,NA
+all,m,0.2,ramet mortality,NA
+env,L_above,1,light available above,Total PAR
+y1,h,2,height,cm
+y2,h,2.888888888888889,height,cm
+y3,h,3.7777777777777777,height,cm
+y4,h,4.666666666666666,height,cm
+y5,h,5.555555555555555,height,cm
+y6,h,6.444444444444445,height,cm
+y7,h,7.333333333333333,height,cm
+y8,h,8.222222222222221,height,cm
+y9,h,9.11111111111111,height,cm
+y10,h,10,height,cm
